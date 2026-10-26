@@ -339,6 +339,15 @@ namespace fable::multiplayer::presentation
                 expressionTriggerTicks);
     }
 
+    bool RemotePlayerRegistry::PerformMotion(
+        const std::uint64_t actorId, const bool roll, const float (&motion)[5])
+    {
+        const auto iterator = presentations_.find(actorId);
+        return iterator != presentations_.end() &&
+            iterator->second != nullptr &&
+            iterator->second->PerformMotion(roll, motion);
+    }
+
     void RemotePlayerRegistry::Shutdown() noexcept
     {
         partyHud_.Shutdown();

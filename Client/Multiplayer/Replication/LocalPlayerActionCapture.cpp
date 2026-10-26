@@ -1,3 +1,4 @@
+#include "Game/Creature/Actions/Native/CreatureMotionActionFunctions.h"
 #include "LocalPlayerActionCapture.h"
 
 #include "PlayerActionSemantics.h"
@@ -352,6 +353,77 @@ namespace fable::multiplayer::replication
         return Queue(std::move(message));
     }
 
+    bool LocalPlayerActionCapture::CaptureLocalMotion(
+        const game::creature::actions::CreatureActionLifecycleEvent& action)
+    {
+        void* const localHero = localHero_ != nullptr
+            ? localHero_->NativeHero() : nullptr;
+        const PlayerState* const state = localHero_ != nullptr
+            ? localHero_->CurrentState() : nullptr;
+        if (!action.accepted || action.creature == nullptr ||
+            action.creature != localHero || action.actionType[0] == '\0' ||
+            state == nullptr || state->actorId != localActorId_ ||
+            state->authorityEpoch == 0 || state->actorGeneration == 0 ||
+            state->mapEpoch == 0 || state->mapName.empty())
+        {
+            return true;
+        }
+
+        protocol::PlayerActionMessage message;
+        message.phase = role_ == PeerRole::Host
+            ? protocol::PlayerActionPhase::Perform
+            : protocol::PlayerActionPhase::Intent;
+        const bool roll = player_action_semantics::IsRoll(action.actionType);
+        message.kind = roll
+            ? protocol::PlayerActionKind::Roll
+            : protocol::PlayerActionKind::Block;
+        if (roll)
+        {
+            float direction[3] = {};
+            float stick[2] = {};
+            if (!game::creature::actions::native::CreatureMotionActionFunctions::ReadStrafeJump(
+                    GetModuleHandleW(nullptr), action.action, direction, stick))
+            {
+                diagnostics_.Event("MultiplayerLocalRollUnreadable", action.actionType);
+                return true;
+            }
+            message.motion[0] = direction[0];
+            message.motion[1] = direction[1];
+            message.motion[2] = direction[2];
+            message.motion[3] = stick[0];
+            message.motion[4] = stick[1];
+        }
+        message.ownerActorId = localActorId_;
+        message.actionId = NextActionId();
+        message.authorityEpoch = state->authorityEpoch;
+        message.actorGeneration = state->actorGeneration;
+        message.mapEpoch = state->mapEpoch;
+        message.mapName = state->mapName;
+        message.semanticName = roll ? "Roll" : "Block";
+        message.resolvedActionType = action.actionType;
+        message.resolvedAnimationId = action.animationId <= 0xFFFF ? action.animationId : 0;
+        if (!EnsurePresentationTiming(
+                message, action.observedAt,
+                presentation::RemotePlayerActionPresentation::DefaultDurationMs(
+                    message.kind)))
+        {
+            return true;
+        }
+        char detail[256] = {};
+        std::snprintf(
+            detail,
+            sizeof(detail),
+            "actor_id=%llu action_id=%llu kind=%s direction=(%.2f,%.2f,%.2f) stick=(%.2f,%.2f) map=%s",
+            static_cast<unsigned long long>(message.ownerActorId),
+            static_cast<unsigned long long>(message.actionId),
+            message.semanticName.c_str(),
+            message.motion[0], message.motion[1], message.motion[2],
+            message.motion[3], message.motion[4],
+            message.mapName.c_str());
+        diagnostics_.Event("MultiplayerLocalMotionCaptured", detail);
+        return Queue(std::move(message));
+    }
+
     bool LocalPlayerActionCapture::CaptureLocalRangedAction(
         const game::creature::actions::CreatureActionLifecycleEvent& action)
     {
@@ -627,6 +699,14 @@ namespace fable::multiplayer::replication
             if (player_action_semantics::IsExpression(actions.front().actionType))
             {
                 if (!CaptureLocalExpression(actions.front()))
+                {
+                    return false;
+                }
+            }
+            else if (player_action_semantics::IsRoll(actions.front().actionType) ||
+                     player_action_semantics::IsBlockStart(actions.front().actionType))
+            {
+                if (!CaptureLocalMotion(actions.front()))
                 {
                     return false;
                 }

@@ -36,6 +36,11 @@ namespace fable::multiplayer::protocol
         // A semantic Fable expression definition. Replaying the native action
         // preserves animation, audio, effects, and NPC social reactions.
         Expression = 6,
+        // Native roll/dodge (CCombatAction_ControlledStrafeJump). motion[0..2]
+        // is the planar direction, motion[3..4] the stick input.
+        Roll = 7,
+        // Native block start (CCreatureAction_StartBlocking).
+        Block = 8,
     };
 
     struct PlayerActionMessage final
@@ -77,6 +82,7 @@ namespace fable::multiplayer::protocol
         // a different native Hero pointer/Thing UID for that presentation.
         std::uint64_t targetPlayerActorId = 0;
         std::uint64_t targetThingUid = 0;
+        float motion[5] = {};
         std::string mapName;
         std::string semanticName;
         std::string resolvedActionType;

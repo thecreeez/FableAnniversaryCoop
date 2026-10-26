@@ -42,6 +42,20 @@ namespace fable::multiplayer::replication::player_action_semantics
             std::strstr(actionType, "PerformExpression") != nullptr;
     }
 
+    [[nodiscard]] inline bool IsRoll(
+        const char* actionType) noexcept
+    {
+        return actionType != nullptr &&
+            std::strstr(actionType, "ControlledStrafeJump") != nullptr;
+    }
+
+    [[nodiscard]] inline bool IsBlockStart(
+        const char* actionType) noexcept
+    {
+        return actionType != nullptr &&
+            std::strstr(actionType, "CCreatureAction_StartBlocking") != nullptr;
+    }
+
     // Trust the live carrying state for melee versus unarmed attacks. A Hero
     // can own a melee weapon while deliberately fighting with empty hands, so
     // inventory presence must never promote None to Melee. Ranged fire is the
@@ -69,6 +83,8 @@ namespace fable::multiplayer::replication::player_action_semantics
                 IsRangedAimStart(actionType) ||
                 IsRangedFire(actionType) ||
                 IsWeaponTransition(actionType) ||
-                IsExpression(actionType));
+                IsExpression(actionType) ||
+                IsRoll(actionType) ||
+                IsBlockStart(actionType));
     }
 }

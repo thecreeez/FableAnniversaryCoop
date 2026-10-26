@@ -254,7 +254,9 @@ namespace fable::multiplayer::replication
         else if (message.kind == protocol::PlayerActionKind::AbilityRequest ||
             message.kind == protocol::PlayerActionKind::RangedAim ||
             message.kind == protocol::PlayerActionKind::RangedAimEnd ||
-            message.kind == protocol::PlayerActionKind::Expression)
+            message.kind == protocol::PlayerActionKind::Expression ||
+            message.kind == protocol::PlayerActionKind::Roll ||
+            message.kind == protocol::PlayerActionKind::Block)
         {
             char detail[224] = {};
             std::snprintf(
@@ -395,7 +397,9 @@ namespace fable::multiplayer::replication
         const char* const rejectionDetail)
     {
         if (message.kind == protocol::PlayerActionKind::RangedAimEnd ||
-            message.kind == protocol::PlayerActionKind::Expression)
+            message.kind == protocol::PlayerActionKind::Expression ||
+            message.kind == protocol::PlayerActionKind::Roll ||
+            message.kind == protocol::PlayerActionKind::Block)
         {
             return true;
         }
@@ -553,7 +557,11 @@ namespace fable::multiplayer::replication
                 pendingMessages_.front().message.kind ==
                     protocol::PlayerActionKind::RangedAimEnd ||
                 pendingMessages_.front().message.kind ==
-                    protocol::PlayerActionKind::Expression)
+                    protocol::PlayerActionKind::Expression ||
+                pendingMessages_.front().message.kind ==
+                    protocol::PlayerActionKind::Roll ||
+                pendingMessages_.front().message.kind ==
+                    protocol::PlayerActionKind::Block)
             {
                 char detail[192] = {};
                 std::snprintf(

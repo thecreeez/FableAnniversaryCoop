@@ -54,6 +54,10 @@ namespace fable::multiplayer::presentation
             return 250;
         case PlayerActionKind::Expression:
             return 1'500;
+        case PlayerActionKind::Roll:
+            return 900;
+        case PlayerActionKind::Block:
+            return 600;
         case PlayerActionKind::HeroAbility:
             return 1'500;
         case PlayerActionKind::AbilityRequest:
@@ -118,6 +122,8 @@ namespace fable::multiplayer::presentation
         case PlayerActionKind::AbilityRequest:
         case PlayerActionKind::RangedAim:
         case PlayerActionKind::RangedAimEnd:
+        case PlayerActionKind::Roll:
+        case PlayerActionKind::Block:
             return Lane::Combat;
         case PlayerActionKind::WeaponTransition:
             break;
@@ -444,6 +450,13 @@ namespace fable::multiplayer::presentation
                     break;
                 case PlayerActionKind::RangedAimEnd:
                     accepted = remotePlayers_->EndRangedAim(message.ownerActorId);
+                    break;
+                case PlayerActionKind::Roll:
+                case PlayerActionKind::Block:
+                    accepted = remotePlayers_->PerformMotion(
+                        message.ownerActorId,
+                        message.kind == PlayerActionKind::Roll,
+                        message.motion);
                     break;
                 case PlayerActionKind::AbilityRequest:
                 case PlayerActionKind::RangedAim:

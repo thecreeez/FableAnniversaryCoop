@@ -1,3 +1,4 @@
+#include "Game/Creature/Actions/Native/CreatureMotionActionFunctions.h"
 #include "Game/Creature/Actions/Hooks/CreatureActionLifecycleObserver.h"
 #include "Game/Creature/Combat/CreatureCombatService.h"
 #include "Game/Creature/Locomotion/Hooks/CreatureModeManagerObserver.h"
@@ -162,6 +163,23 @@ namespace fable::multiplayer::presentation
         const std::uint32_t,
         const std::int32_t,
         const std::int32_t)
+    {
+        return false;
+    }
+
+    bool RemotePlayerRegistry::PerformMotion(
+        const std::uint64_t,
+        const bool,
+        const float (&)[5])
+    {
+        return false;
+    }
+}
+
+namespace fable::game::creature::actions::native
+{
+    bool CreatureMotionActionFunctions::ReadStrafeJump(
+        HMODULE, void*, float (&)[3], float (&)[2]) noexcept
     {
         return false;
     }

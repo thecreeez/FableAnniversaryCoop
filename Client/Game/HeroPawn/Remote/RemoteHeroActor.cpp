@@ -1,5 +1,6 @@
 #include "RemoteHeroActor.h"
 
+#include "Game/Creature/Actions/Native/CreatureMotionActionFunctions.h"
 #include "Game/Creature/Companion/Native/CompanionFunctions.h"
 #include "Game/Creature/Animation/CreatureAnimationService.h"
 #include "Game/Creature/Control/ScriptControl.h"
@@ -490,6 +491,24 @@ namespace fable::game::hero_pawn::remote
         diagnostics_.Event(
             "MultiplayerRemoteWorldPresentationRetired",
             "source native presentation released before world teardown; destination awaits its complete current baseline");
+    }
+
+    bool RemoteHeroActor::PerformMotion(const bool roll, const float (&motion)[5])
+    {
+        if (!initialized_ || !IsLifecycleActive() || worldTransitionActive_ ||
+            nativeAvatar_ == nullptr)
+        {
+            return false;
+        }
+        using game::creature::actions::native::CreatureMotionActionFunctions;
+        const HMODULE gameModule = GetModuleHandleW(nullptr);
+        if (!roll)
+        {
+            return CreatureMotionActionFunctions::SubmitStartBlocking(gameModule, nativeAvatar_);
+        }
+        const float direction[3] = {motion[0], motion[1], motion[2]};
+        const float stick[2] = {motion[3], motion[4]};
+        return CreatureMotionActionFunctions::SubmitStrafeJump(gameModule, nativeAvatar_, direction, stick);
     }
 
     void RemoteHeroActor::SetCutsceneHidden(const bool hidden) noexcept

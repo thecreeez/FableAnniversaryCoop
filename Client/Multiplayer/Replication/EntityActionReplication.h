@@ -166,6 +166,7 @@ namespace fable::multiplayer::replication
         bool AcceptAuthoritative(
             const protocol::EntityActionMessage& message);
         bool ReplayAuthoritativeAbility(ActiveAction& action);
+        bool ReplayAuthoritativeUseObject(ActiveAction& action);
         bool ReplayAuthoritativeNativeAction(ActiveAction& action);
         bool ReplayPendingAbilities();
         bool ReplayPendingNativeActions();

@@ -155,6 +155,12 @@ namespace fable::multiplayer::authority
         std::size_t replicableCount = 0;
         std::size_t localSimulationCount = 0;
         std::size_t fencedCount = 0;
+        // Why replicable NPCs are fenced: no record yet, record not live or
+        // on another map, or the record's lease epoch is not ours.
+        std::size_t fencedNoRecord = 0;
+        std::size_t fencedRecordState = 0;
+        std::size_t fencedNotPublisher = 0;
+        std::size_t ownedMapFallback = 0;
         for (const entities::LiveEntityRecord& live : liveEntities)
         {
             if (live.thing == nullptr || !live.creature)
@@ -221,20 +227,35 @@ namespace fable::multiplayer::authority
             }
             ++replicableCount;
 
+            // The current lease holder of the creature's map, once its roster
+            // is complete, runs the native AI of every NPC there. Records can
+            // lag a lease change (a guest arriving first takes the map with a
+            // new epoch, or quest scripts spawn creatures the host directory
+            // has not classified yet); fencing them on the owner would leave
+            // the map with no simulation at all, so enemies never attack.
+            const authority::MapAuthorityLease* const liveLease =
+                authority_->FindMapLease(live.mapId);
+            const bool ownsLiveMap = ownerRosterReady && liveLease != nullptr &&
+                liveLease->actorId == localActorId_ && liveLease->epoch != 0;
+
             bool canSimulate = false;
             if (record == nullptr)
             {
                 // A creature observed before its ordered lifecycle record has
-                // no authoritative incarnation yet. It cannot simulate until
-                // the host directory and map lease classify it.
-                canSimulate = false;
+                // no authoritative incarnation yet; only the map owner runs it.
+                canSimulate = ownsLiveMap;
+                if (canSimulate) ++ownedMapFallback;
+                else ++fencedNoRecord;
             }
             else if (!record->available || !record->live ||
                 !record->creature || record->mapId == 0 ||
                 record->mapId != live.mapId || record->mapName.empty() ||
                 record->mapEpoch == 0)
             {
-                canSimulate = false;
+                canSimulate = ownsLiveMap && record->available &&
+                    (record->mapId == 0 || record->mapId == live.mapId);
+                if (canSimulate) ++ownedMapFallback;
+                else ++fencedRecordState;
             }
             else
             {
@@ -247,6 +268,15 @@ namespace fable::multiplayer::authority
                         record->mapName,
                         localActorId_,
                         record->mapEpoch);
+                }
+                if (!canSimulate && ownsLiveMap)
+                {
+                    canSimulate = true;
+                    ++ownedMapFallback;
+                }
+                else if (!canSimulate)
+                {
+                    ++fencedNotPublisher;
                 }
             }
             std::uint64_t nativeUid = identities_->FindLocal(canonicalUid);
@@ -277,14 +307,18 @@ namespace fable::multiplayer::authority
             std::snprintf(
                 detail,
                 sizeof(detail),
-                "map=%s roster_ready=%s creatures=%zu player_presentations=%zu replicable_npcs=%zu local_simulation=%zu fenced=%zu",
+                "map=%s roster_ready=%s creatures=%zu player_presentations=%zu replicable_npcs=%zu local_simulation=%zu fenced=%zu fenced_no_record=%zu fenced_record_state=%zu fenced_not_publisher=%zu owned_map_fallback=%zu",
                 localMap.c_str(),
                 ownerRosterReady ? "true" : "false",
                 creatureCount,
                 playerPresentationCount,
                 replicableCount,
                 localSimulationCount,
-                fencedCount);
+                fencedCount,
+                fencedNoRecord,
+                fencedRecordState,
+                fencedNotPublisher,
+                ownedMapFallback);
             diagnostics_.Event(
                 "MultiplayerEntitySimulationCoverage",
                 detail);

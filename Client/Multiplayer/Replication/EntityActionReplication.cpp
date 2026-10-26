@@ -1,4 +1,5 @@
 #include "EntityActionReplication.h"
+#include "Game/Creature/Actions/Native/CreatureMotionActionFunctions.h"
 #include "Multiplayer/Runtime/MultiplayerSessionContexts.h"
 #include "Multiplayer/Transport/ReliableSinkDescriptorRegistry.h"
 
@@ -1335,9 +1336,69 @@ namespace fable::multiplayer::replication
         return true;
     }
 
+    bool EntityActionReplication::ReplayAuthoritativeUseObject(
+        ActiveAction& action)
+    {
+        // An NPC using a bench/chair on the owner: run the same native
+        // UseObject on the fenced replica so it sits instead of standing by
+        // the object. Movement replication keeps it in place afterwards.
+        if (presence_ == nullptr || lifecycle_ == nullptr ||
+            action.targetEntityUid == 0)
+        {
+            return true;
+        }
+        const std::uint64_t now = GetTickCount64();
+        if (now < action.nextNativeReplayAt)
+        {
+            return true;
+        }
+        const entities::LiveEntityRecord* const sourceLive =
+            presence_->LiveEntities().Find(action.entityUid);
+        const entities::LiveEntityRecord* const targetLive =
+            presence_->LiveEntities().Find(action.targetEntityUid);
+        if (sourceLive == nullptr || sourceLive->thing == nullptr ||
+            !sourceLive->creature || targetLive == nullptr ||
+            targetLive->thing == nullptr)
+        {
+            ++action.nativeReplayAttempts;
+            action.nextNativeReplayAt = now + 250;
+            if (action.nativeReplayAttempts >= 20) action.nativeReplayFailed = true;
+            return true;
+        }
+        ++action.nativeReplayAttempts;
+        action.nextNativeReplayAt = now + 250;
+        const bool used = game::creature::actions::native::
+            CreatureMotionActionFunctions::SubmitUseObject(
+                GetModuleHandleW(nullptr), sourceLive->thing, targetLive->thing);
+        if (!used)
+        {
+            if (action.nativeReplayAttempts >= 20) action.nativeReplayFailed = true;
+            return true;
+        }
+        action.nativeReplayed = true;
+        char detail[224] = {};
+        std::snprintf(
+            detail,
+            sizeof(detail),
+            "thing_uid=%016llX target_uid=%016llX action_id=%llu owner=%llu attempts=%u",
+            static_cast<unsigned long long>(action.entityUid),
+            static_cast<unsigned long long>(action.targetEntityUid),
+            static_cast<unsigned long long>(action.actionId),
+            static_cast<unsigned long long>(action.ownerActorId),
+            action.nativeReplayAttempts);
+        diagnostics_.Event("MultiplayerEntityUseObjectReplayed", detail);
+        return true;
+    }
+
     bool EntityActionReplication::ReplayAuthoritativeNativeAction(
         ActiveAction& action)
     {
+        if (!action.nativeAbility && action.ownerActorId != localActorId_ &&
+            !action.nativeReplayed && !action.nativeReplayFailed &&
+            action.semanticName == "CCreatureAction_UseObject")
+        {
+            return ReplayAuthoritativeUseObject(action);
+        }
         // Abilities reconstruct their own native action graphs. This codec is
         // for the direct AI melee action observed when an NPC has already made
         // its combat decision and submitted InterruptableMidAttack itself.

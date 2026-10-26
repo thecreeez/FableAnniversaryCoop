@@ -131,6 +131,8 @@ namespace fable::multiplayer::replication
         bool CaptureLocalWeaponTransition(
             const game::creature::actions::CreatureActionLifecycleEvent& action,
             const game::hero_pawn::equipment::HeroEquipmentState& equipment);
+        bool CaptureLocalMotion(
+            const game::creature::actions::CreatureActionLifecycleEvent& action);
         bool CaptureLocalExpression(
             const game::creature::actions::CreatureActionLifecycleEvent& action);
         bool CaptureLocalRangedAction(

@@ -36,6 +36,7 @@ namespace
         float charge = 0.0f;
         std::uint64_t targetPlayerActorId = 0;
         std::uint64_t targetThingUid = 0;
+        float motion[5] = {};
         char mapName[96] = {};
         char semanticName[128] = {};
         char resolvedActionType[128] = {};
@@ -43,7 +44,7 @@ namespace
 #pragma pack(pop)
 
     static_assert(std::is_trivially_copyable_v<WirePlayerActionMessage>);
-    static_assert(sizeof(WirePlayerActionMessage) == 452);
+    static_assert(sizeof(WirePlayerActionMessage) == 472);
     static_assert(
         sizeof(WirePlayerActionMessage) <=
             fable::multiplayer::protocol::MaximumReliableMessageBytes);
@@ -79,6 +80,15 @@ namespace
             message.kind == PlayerActionKind::RangedAimEnd;
         const bool expression =
             message.kind == PlayerActionKind::Expression;
+        const bool motion =
+            message.kind == PlayerActionKind::Roll ||
+            message.kind == PlayerActionKind::Block;
+        bool saneMotion = true;
+        for (const float value : message.motion)
+        {
+            saneMotion = saneMotion && std::isfinite(value) &&
+                value >= -100'000.0f && value <= 100'000.0f;
+        }
         const bool hasPresentationTiming =
             message.startedAtSessionTimeMs != SessionTimeUnset ||
             message.expectedDurationMs != 0 || message.presentationRevision != 0;
@@ -116,7 +126,8 @@ namespace
         return (message.phase == PlayerActionPhase::Intent ||
                 message.phase == PlayerActionPhase::Perform) &&
             (ability || rangedAim || weaponTransition || heroAbility ||
-                rangedAimEnd || expression) &&
+                rangedAimEnd || expression || motion) &&
+            saneMotion &&
             saneFamily &&
             saneProgressionState &&
             saneUnarmedAttack &&
@@ -155,6 +166,10 @@ namespace
                     message.targetThingUid == 0 &&
                     message.resolvedAnimationId == 0 &&
                     message.resolvedActionType.empty()) ||
+                (motion && message.abilityId == 0 &&
+                    message.targetPlayerActorId == 0 &&
+                    message.targetThingUid == 0 &&
+                    !message.resolvedActionType.empty()) ||
                 (expression && message.abilityId == 0 &&
                     message.weaponFamily == CreatureWeaponFamily::None &&
                     message.charge == 0.0f &&
@@ -216,6 +231,7 @@ namespace fable::multiplayer::protocol
         wire.charge = message.charge;
         wire.targetPlayerActorId = message.targetPlayerActorId;
         wire.targetThingUid = message.targetThingUid;
+        std::memcpy(wire.motion, message.motion, sizeof(wire.motion));
         strncpy_s(wire.mapName, message.mapName.c_str(), _TRUNCATE);
         strncpy_s(wire.semanticName, message.semanticName.c_str(), _TRUNCATE);
         strncpy_s(
@@ -277,6 +293,7 @@ namespace fable::multiplayer::protocol
         message.charge = wire.charge;
         message.targetPlayerActorId = wire.targetPlayerActorId;
         message.targetThingUid = wire.targetThingUid;
+        std::memcpy(message.motion, wire.motion, sizeof(message.motion));
         message.mapName = wire.mapName;
         message.semanticName = wire.semanticName;
         message.resolvedActionType = wire.resolvedActionType;

@@ -221,6 +221,7 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClCompile Include="Multiplayer\Persistence\QuestEventReplicationService.cpp" />
     <ClCompile Include="Game\Cutscene\CutsceneObserver.cpp" />
     <ClCompile Include="Game\Cutscene\HeroControlSuspension.cpp" />
+    <ClCompile Include="Game\Creature\Actions\Native\CreatureMotionActionFunctions.cpp" />
     <ClCompile Include="Game\Native\ScriptInterfaceTracer.cpp" />
     <ClCompile Include="Game\Native\HudMessageProbe.cpp" />
     <ClCompile Include="Game\Native\NativePromptBox.cpp" />
@@ -539,6 +540,7 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClInclude Include="Multiplayer\Persistence\QuestEventReplicationService.h" />
     <ClInclude Include="Game\Cutscene\CutsceneObserver.h" />
     <ClInclude Include="Game\Cutscene\HeroControlSuspension.h" />
+    <ClInclude Include="Game\Creature\Actions\Native\CreatureMotionActionFunctions.h" />
     <ClInclude Include="Game\Native\ScriptInterfaceTracer.h" />
     <ClInclude Include="Game\Native\HudMessageProbe.h" />
     <ClInclude Include="Game\Native\NativePromptBox.h" />

@@ -90,6 +90,8 @@ namespace fable::multiplayer::presentation
         void BeginWorldTransition() noexcept;
         void CompleteWorldTransition() noexcept;
         void SetCutsceneHidden(bool hidden) noexcept;
+        // Roll (motion = direction xyz + stick xy) or block start.
+        bool PerformMotion(std::uint64_t actorId, bool roll, const float (&motion)[5]);
         void DriveMovement();
         bool ApplyHealth(
             std::uint64_t actorId,
