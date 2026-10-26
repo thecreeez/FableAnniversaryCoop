@@ -1,5 +1,6 @@
 #include "ChestSyncService.h"
 
+#include "Game/Entity/EntityService.h"
 #include "Game/Entity/Native/ThingComponentAccess.h"
 #include "Game/Native/Addresses.h"
 #include "Game/Native/ScriptTypes.h"
@@ -44,6 +45,11 @@ namespace
     constexpr std::size_t ChestOpeningOffset = 0x22;
     constexpr std::size_t ChestClosingOffset = 0x23;
     constexpr std::size_t MaximumItems = 64;
+    // CTCDoor::SetOpen(bool), this = door component (type 0x26).
+    constexpr std::uintptr_t DoorSetOpenRva = 0x01981B60;
+    constexpr std::uint8_t DoorSetOpenPrologue[] = {0x53, 0x8A, 0x5C, 0x24, 0x08, 0x56, 0x8B, 0xF1};
+    constexpr std::int32_t DoorComponent = 0x26;
+    constexpr std::size_t DoorOpenOffset = 0x10;
 
     struct NameVector final
     {
@@ -70,6 +76,7 @@ FABLE_RELIABLE_SINK_DESCRIPTOR(
 namespace fable::multiplayer::world
 {
     ChestSyncService* ChestSyncService::active_ = nullptr;
+    thread_local bool ChestSyncService::replayingDoor_ = false;
 
     void ChestSyncService::Initialize(
         const PeerRole role,
@@ -77,9 +84,11 @@ namespace fable::multiplayer::world
         entities::EntityPresenceReplication& presence,
         entities::EntityNetworkIdentityRegistry& identities,
         replication::LocalHeroReplication& localHero,
+        game::EntityService& entities,
         const core::Diagnostics& diagnostics) noexcept
     {
         Shutdown();
+        entities_ = &entities;
         role_ = role;
         transport_ = &transport;
         presence_ = &presence;
@@ -100,15 +109,27 @@ namespace fable::multiplayer::world
         }
         originalReward_ = reinterpret_cast<RewardFn>(reward_.Original());
         diagnostics_.Event("ChestSyncReady", "opened chests are shared; consumables go to every player");
+        if (doorSetOpen_.Install(reinterpret_cast<void*>(base_ + DoorSetOpenRva), DoorSetOpenPrologue,
+                sizeof(DoorSetOpenPrologue), reinterpret_cast<void*>(&DoorSetOpenObserved), sizeof(DoorSetOpenPrologue)))
+        {
+            originalDoorSetOpen_ = reinterpret_cast<SetDoorOpenFn>(doorSetOpen_.Original());
+            diagnostics_.Event("DemonDoorSyncReady", "opened demon doors are shared");
+        }
+        else
+        {
+            diagnostics_.Event("DemonDoorSyncBlocked", "door SetOpen prologue did not match");
+        }
     }
 
     void ChestSyncService::Shutdown() noexcept
     {
+        if (doorSetOpen_.Shutdown()) originalDoorSetOpen_ = nullptr;
         if (!reward_.Shutdown()) return;
         originalReward_ = nullptr;
         if (active_ == this) active_ = nullptr;
         std::lock_guard<std::mutex> lock(mutex_);
         localOpened_.clear();
+        localDoors_.clear();
         remoteOpening_.clear();
         inbound_.clear();
         outbound_.clear();
@@ -131,6 +152,58 @@ namespace fable::multiplayer::world
         }
         if (remote) return self->RewardConsumables(container);
         return self->originalReward_(container);
+    }
+
+    void __fastcall ChestSyncService::DoorSetOpenObserved(void* const door, void* const edx, const std::uint8_t open)
+    {
+        (void)edx;
+        ChestSyncService* const self = active_;
+        if (self == nullptr || self->originalDoorSetOpen_ == nullptr) return;
+        if (!replayingDoor_ && open != 0)
+        {
+            const bool wasClosed = static_cast<const std::uint8_t*>(door)[DoorOpenOffset] == 0;
+            void* const owner = *reinterpret_cast<void* const*>(static_cast<const std::uint8_t*>(door) + 4);
+            if (wasClosed && owner != nullptr)
+            {
+                std::lock_guard<std::mutex> lock(self->mutex_);
+                if (self->localDoors_.size() < QueueLimit) self->localDoors_.push_back(owner);
+            }
+        }
+        self->originalDoorSetOpen_(door, open);
+    }
+
+    bool ChestSyncService::IsDemonDoor(const void* const thing) const
+    {
+        const entities::LiveEntityRecord* const live = presence_->LiveEntities().FindByThing(thing);
+        if (live == nullptr) return false;
+        if (live->scriptName.find("DemonDoor") != std::string::npos) return true;
+        std::string definition;
+        return entities_ != nullptr && entities_->ResolveDefinitionName(live->definitionIndex, definition) &&
+            definition.find("DEMON_DOOR") != std::string::npos;
+    }
+
+    bool ChestSyncService::OpenDoorLocally(const ChestOpen& message)
+    {
+        const PlayerState* const local = localHero_ != nullptr ? localHero_->CurrentState() : nullptr;
+        if (local == nullptr || local->mapId != message.mapId || originalDoorSetOpen_ == nullptr) return true;
+        std::uint64_t uid = identities_->FindLocal(message.thingUid);
+        if (uid == 0) uid = message.thingUid;
+        const entities::LiveEntityRecord* const live = presence_->LiveEntities().Find(uid);
+        void* const door = live != nullptr && live->thing != nullptr
+            ? game::entity::native::ThingComponentAccess::Find(
+                live->thing, static_cast<game::entity::native::ThingComponentType>(DoorComponent))
+            : nullptr;
+        char detail[128] = {};
+        std::snprintf(detail, sizeof(detail), "thing_uid=%016llX door=%d",
+            static_cast<unsigned long long>(message.thingUid), door != nullptr ? 1 : 0);
+        if (door != nullptr)
+        {
+            replayingDoor_ = true;
+            originalDoorSetOpen_(door, 1);
+            replayingDoor_ = false;
+        }
+        diagnostics_.Event("DemonDoorRemoteOpened", detail);
+        return true;
     }
 
     bool ChestSyncService::IsSharedConsumable(const char* const name) noexcept
@@ -265,7 +338,9 @@ namespace fable::multiplayer::world
         std::memcpy(bytes + 8, &message.thingUid, 8);
         std::memcpy(bytes + 16, &message.mapId, 2);
         return transport_ != nullptr && transport_->SubmitReliable(
-            reliable_stream::Control, protocol::PacketType::ChestOpen, bytes, sizeof(bytes));
+            reliable_stream::Control,
+            message.door ? protocol::PacketType::DemonDoorOpen : protocol::PacketType::ChestOpen,
+            bytes, sizeof(bytes));
     }
 
     static void* ContainerOwner(void* const container) noexcept
@@ -285,10 +360,12 @@ namespace fable::multiplayer::world
         if (transport_ == nullptr || originalReward_ == nullptr) return true;
         if (transport_->HasFailed()) return false;
         std::deque<void*> opened;
+        std::deque<void*> doors;
         std::deque<ChestOpen> inbound;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             opened.swap(localOpened_);
+            doors.swap(localDoors_);
             inbound.swap(inbound_);
         }
         const PlayerState* const local = localHero_ != nullptr ? localHero_->CurrentState() : nullptr;
@@ -308,9 +385,25 @@ namespace fable::multiplayer::world
                 static_cast<unsigned long long>(message.thingUid), static_cast<unsigned>(message.mapId));
             diagnostics_.Event("ChestLocalOpened", detail);
         }
+        for (void* const thing : doors)
+        {
+            const entities::LiveEntityRecord* const live = presence_->LiveEntities().FindByThing(thing);
+            if (live == nullptr || local == nullptr || !IsDemonDoor(thing)) continue;
+            ChestOpen message;
+            message.revision = ++nextRevision_;
+            message.thingUid = identities_->CanonicalizeLocalObservation(live->thingUid);
+            message.mapId = local->mapId;
+            message.door = true;
+            outbound_.push_back(message);
+            char detail[128] = {};
+            std::snprintf(detail, sizeof(detail), "thing_uid=%016llX map_id=%u",
+                static_cast<unsigned long long>(message.thingUid), static_cast<unsigned>(message.mapId));
+            diagnostics_.Event("DemonDoorLocalOpened", detail);
+        }
         for (const ChestOpen& message : inbound)
         {
-            OpenLocally(message);
+            if (message.door) OpenDoorLocally(message);
+            else OpenLocally(message);
             // The host fans a guest's chest out to the other guests.
             if (role_ == PeerRole::Host && outbound_.size() < QueueLimit) outbound_.push_back(message);
         }
@@ -324,12 +417,17 @@ namespace fable::multiplayer::world
 
     bool ChestSyncService::HandleReliableMessage(const TransportMessage& transportMessage)
     {
-        if (transportMessage.type != protocol::PacketType::ChestOpen) return false;
+        if (transportMessage.type != protocol::PacketType::ChestOpen &&
+            transportMessage.type != protocol::PacketType::DemonDoorOpen)
+        {
+            return false;
+        }
         if (transportMessage.payloadSize != MessageBytes) return true;
         ChestOpen message;
         std::memcpy(&message.revision, transportMessage.payload.data(), 8);
         std::memcpy(&message.thingUid, transportMessage.payload.data() + 8, 8);
         std::memcpy(&message.mapId, transportMessage.payload.data() + 16, 2);
+        message.door = transportMessage.type == protocol::PacketType::DemonDoorOpen;
         if (message.thingUid == 0 || message.mapId == 0) return true;
         std::lock_guard<std::mutex> lock(mutex_);
         if (inbound_.size() < QueueLimit) inbound_.push_back(message);

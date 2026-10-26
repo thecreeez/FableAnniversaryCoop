@@ -12,6 +12,11 @@
 #include <mutex>
 #include <unordered_set>
 
+namespace fable::game
+{
+    class EntityService;
+}
+
 namespace fable::multiplayer
 {
     class UdpPeer;
@@ -34,12 +39,15 @@ namespace fable::multiplayer::world
     // copy of the chest (lid animation, opened state) and, when retail calls
     // Reward there, receives only the consumables: weapons, clothing, gold
     // and other items stay with the player who opened it (owner rule).
+    // Demon doors use the same channel: each player solves the riddle alone,
+    // and once any player's door opens (CTCDoor::SetOpen) it opens for all.
     class ChestSyncService final : public ReliableMessageSink
     {
     public:
         [[nodiscard]] ReliableMessageTypeSet HandledPacketTypes() const noexcept override
         {
-            static constexpr protocol::PacketType types[] = {protocol::PacketType::ChestOpen};
+            static constexpr protocol::PacketType types[] = {
+                protocol::PacketType::ChestOpen, protocol::PacketType::DemonDoorOpen};
             return {types, sizeof(types) / sizeof(types[0])};
         }
 
@@ -49,6 +57,7 @@ namespace fable::multiplayer::world
             entities::EntityPresenceReplication& presence,
             entities::EntityNetworkIdentityRegistry& identities,
             replication::LocalHeroReplication& localHero,
+            game::EntityService& entities,
             const core::Diagnostics& diagnostics) noexcept;
         void Shutdown() noexcept;
         // Game thread.
@@ -64,9 +73,14 @@ namespace fable::multiplayer::world
             std::uint64_t revision = 0;
             std::uint64_t thingUid = 0;
             std::uint16_t mapId = 0;
+            bool door = false;
         };
 
         using RewardFn = bool(__thiscall*)(void* container);
+        using SetDoorOpenFn = void(__thiscall*)(void* door, std::uint8_t open);
+        static void __fastcall DoorSetOpenObserved(void* door, void* edx, std::uint8_t open);
+        bool IsDemonDoor(const void* thing) const;
+        bool OpenDoorLocally(const ChestOpen& message);
         static bool __fastcall RewardObserved(void* container, void* edx);
         static bool IsSharedConsumable(const char* definitionName) noexcept;
         bool RewardConsumables(void* container) noexcept;
@@ -76,6 +90,12 @@ namespace fable::multiplayer::world
         static ChestSyncService* active_;
         core::hooking::InlineHook reward_;
         RewardFn originalReward_ = nullptr;
+        core::hooking::InlineHook doorSetOpen_;
+        SetDoorOpenFn originalDoorSetOpen_ = nullptr;
+        static thread_local bool replayingDoor_;
+        game::EntityService* entities_ = nullptr;
+        // Door Things the local game opened, reported from the hook.
+        std::deque<void*> localDoors_;
         std::uintptr_t base_ = 0;
         PeerRole role_ = PeerRole::Guest;
         UdpPeer* transport_ = nullptr;

@@ -49,6 +49,7 @@ namespace fable::multiplayer::protocol
         // Shared cutscene start, sent once every player has gathered.
         Cutscene = 20,
         ChestOpen = 21,
+        DemonDoorOpen = 22,
         Count,
     };
 
