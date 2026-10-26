@@ -221,6 +221,7 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClCompile Include="Multiplayer\Persistence\QuestEventReplicationService.cpp" />
     <ClCompile Include="Game\Cutscene\CutsceneObserver.cpp" />
     <ClCompile Include="Game\Cutscene\HeroControlSuspension.cpp" />
+    <ClCompile Include="Game\Native\QuestMapCameraGuard.cpp" />
     <ClCompile Include="Multiplayer\World\ChestSyncService.cpp" />
     <ClCompile Include="Game\Quest\Sync\QuestScreenHook.cpp" />
     <ClCompile Include="Multiplayer\Combat\EnemyTargetDistributor.cpp" />
@@ -543,6 +544,7 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClInclude Include="Multiplayer\Persistence\QuestEventReplicationService.h" />
     <ClInclude Include="Game\Cutscene\CutsceneObserver.h" />
     <ClInclude Include="Game\Cutscene\HeroControlSuspension.h" />
+    <ClInclude Include="Game\Native\QuestMapCameraGuard.h" />
     <ClInclude Include="Multiplayer\World\ChestSyncService.h" />
     <ClInclude Include="Game\Quest\Sync\QuestScreenHook.h" />
     <ClInclude Include="Multiplayer\Combat\EnemyTargetDistributor.h" />

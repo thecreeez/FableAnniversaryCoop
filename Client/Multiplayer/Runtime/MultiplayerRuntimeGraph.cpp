@@ -1,3 +1,4 @@
+#include "Game/Native/QuestMapCameraGuard.h"
 #include "MultiplayerRuntimeGraph.h"
 
 #include "Automation/Runtime/RuntimeConfiguration.h"
@@ -129,6 +130,7 @@ namespace fable::multiplayer
         // save/load prologues, which questState patches on install.
         w.questEvents.Initialize(role, actorId, t.transport, diagnostics_);
         w.cutscenes.Install(GetModuleHandleW(nullptr), diagnostics_);
+        game::native::InstallQuestMapCameraGuard(GetModuleHandleW(nullptr), diagnostics_);
         w.questEvents.SetScriptInterfaceSource(w.cutscenes.ScriptInterfaceSlot());
         w.scriptTracer.Install(GetModuleHandleW(nullptr), diagnostics_);
         w.hudMessageProbe.Install(GetModuleHandleW(nullptr), diagnostics_);
@@ -300,6 +302,7 @@ namespace fable::multiplayer
             w.scriptTracer.Shutdown();
             w.hudMessageProbe.Shutdown();
             w.cutscenes.Shutdown();
+            game::native::ShutdownQuestMapCameraGuard();
             w.questFields.Shutdown();
             w.questEvents.Shutdown();
             w.questState.Shutdown();
