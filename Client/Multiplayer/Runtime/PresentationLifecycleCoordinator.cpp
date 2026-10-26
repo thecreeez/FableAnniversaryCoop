@@ -69,6 +69,10 @@ namespace fable::multiplayer
         {
             diagnostics.Event("ClientFailed", "multiplayer-cutscene-sync");
         }
+        if (!world.chestSync.Process())
+        {
+            diagnostics.Event("ClientFailed", "multiplayer-chest-sync");
+        }
         if (!world.questFields.Process())
         {
             diagnostics.Event("ClientFailed", "multiplayer-quest-field-sync");

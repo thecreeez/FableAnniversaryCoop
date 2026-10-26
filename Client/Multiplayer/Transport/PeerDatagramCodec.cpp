@@ -57,6 +57,7 @@ namespace fable::multiplayer::transport_codec
             type == PacketType::QuestEvent ||
             type == PacketType::QuestField ||
             type == PacketType::Cutscene ||
+            type == PacketType::ChestOpen ||
             type == PacketType::PlayerActorState ||
             type == PacketType::CombatHit ||
             type == PacketType::ReliableFragment;

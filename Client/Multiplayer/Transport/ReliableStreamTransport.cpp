@@ -170,7 +170,8 @@ namespace fable::multiplayer
                 type == PacketType::WorldSectionSnapshot ||
                 type == PacketType::QuestEvent ||
                 type == PacketType::QuestField ||
-                type == PacketType::Cutscene;
+                type == PacketType::Cutscene ||
+                type == PacketType::ChestOpen;
         }
         if (streamId.kind == ReliableStreamKind::World)
         {

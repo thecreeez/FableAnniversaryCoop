@@ -5,6 +5,7 @@
 // forcing every new replicated feature into MultiplayerSession itself.
 
 #include "Game/Cutscene/CutsceneObserver.h"
+#include "Multiplayer/World/ChestSyncService.h"
 #include "Game/Native/ScriptInterfaceTracer.h"
 #include "Game/Native/HudMessageProbe.h"
 #include "Multiplayer/Combat/EnemyTargetDistributor.h"
@@ -71,6 +72,7 @@ namespace fable::multiplayer
         persistence::QuestFieldSyncService questFields;
         game::cutscene::CutsceneObserver cutscenes;
         world::CutsceneSyncService cutsceneSync;
+        world::ChestSyncService chestSync;
         game::native::ScriptInterfaceTracer scriptTracer;
         game::native::HudMessageProbe hudMessageProbe;
         persistence::WorldSectionAuthorityService worldSections;
