@@ -29,6 +29,7 @@ namespace
         case QuestEventOperation::Deactivate: return "deactivate";
         case QuestEventOperation::Complete: return "complete";
         case QuestEventOperation::Fail: return "fail";
+        case QuestEventOperation::ShowQuestScreen: return "show-quest-screen";
         }
         return "unknown";
     }
@@ -86,6 +87,7 @@ namespace fable::multiplayer::persistence
         }
         enabled_ = hook_.Install(GetModuleHandleW(nullptr), diagnostics_);
         if (enabled_) hook_.SetDuplicateFilter(&IsRemoteDuplicate, this);
+        if (enabled_) screenHook_.Install(GetModuleHandleW(nullptr), diagnostics_);
         if (!enabled_)
         {
             diagnostics_.Event(
@@ -118,6 +120,7 @@ namespace fable::multiplayer::persistence
     void QuestEventReplicationService::Shutdown() noexcept
     {
         hook_.SetDuplicateFilter(nullptr, nullptr);
+        screenHook_.Shutdown();
         hook_.Shutdown();
         transport_ = nullptr;
         diagnostics_ = {};
@@ -142,6 +145,11 @@ namespace fable::multiplayer::persistence
         while (hook_.PopObservation(observation))
         {
             if (!PublishLocal(observation)) return false;
+        }
+        QuestScreenHook::Observation screen;
+        while (screenHook_.PopObservation(screen))
+        {
+            if (!PublishScreen(screen)) return false;
         }
 
         // Replays run in arrival order; stop at the first one that must wait
@@ -200,6 +208,36 @@ namespace fable::multiplayer::persistence
         {
             Report("MultiplayerQuestEventDropped", message, localActorId_, "outbound-full");
             return false;
+        }
+        outbound_.push_back(message);
+        Report("MultiplayerQuestEventLocal", message, localActorId_,
+            role_ == PeerRole::Host ? "broadcast" : "report-to-host");
+        return true;
+    }
+
+    bool QuestEventReplicationService::PublishScreen(const QuestScreenHook::Observation& observation)
+    {
+        if (observation.name.empty() || observation.name.size() >= protocol::MaximumQuestEventNameBytes)
+        {
+            return true;
+        }
+        try
+        {
+            screenShownAt_[observation.name] = GetTickCount64();
+        }
+        catch (...)
+        {
+        }
+        QuestEventMessage message;
+        message.operation = QuestEventOperation::ShowQuestScreen;
+        message.arguments[0] = observation.mode ? 1u : 0u;
+        message.nameLength = static_cast<std::uint8_t>(observation.name.size());
+        std::memcpy(message.name, observation.name.data(), observation.name.size());
+        message.revision = ++nextRevision_;
+        if (outbound_.size() >= PendingLimit)
+        {
+            Report("MultiplayerQuestEventDropped", message, localActorId_, "outbound-full");
+            return true;
         }
         outbound_.push_back(message);
         Report("MultiplayerQuestEventLocal", message, localActorId_,
@@ -310,6 +348,7 @@ namespace fable::multiplayer::persistence
         // This build exposes no failed predicate (slot 302 is a constant
         // false), so a fail is replayed only while the quest is running here.
         case QuestEventOperation::Fail: return active && !completed;
+        case QuestEventOperation::ShowQuestScreen: return true;
         }
         return false;
     }
@@ -318,6 +357,38 @@ namespace fable::multiplayer::persistence
     {
         if (!hook_.IsManagerReady()) return false;
         const QuestEventMessage& message = pending.message;
+        if (message.operation == QuestEventOperation::ShowQuestScreen)
+        {
+            void* const scriptInterface = scriptInterface_ != nullptr ? *scriptInterface_ : nullptr;
+            if (scriptInterface == nullptr) return false;
+            const auto previous = screenShownAt_.find(message.name);
+            const std::uint64_t now = GetTickCount64();
+            if (previous != screenShownAt_.end() && now - previous->second < ScreenDedupMilliseconds)
+            {
+                Report("MultiplayerQuestEventSatisfied", message, pending.sourceActorId, "quest-screen-already-shown");
+                return true;
+            }
+            const bool shown = screenHook_.Replay(scriptInterface, message.name, message.arguments[0] != 0);
+            if (shown)
+            {
+                try
+                {
+                    screenShownAt_[message.name] = now;
+                }
+                catch (...)
+                {
+                }
+            }
+            Report(shown ? "MultiplayerQuestEventApplied" : "MultiplayerQuestEventApplyFailed",
+                message, pending.sourceActorId, shown ? "quest-screen" : "quest-screen-rejected");
+            if (pending.rebroadcast && outbound_.size() < PendingLimit)
+            {
+                QuestEventMessage relay = message;
+                relay.revision = ++nextRevision_;
+                outbound_.push_back(relay);
+            }
+            return true;
+        }
         if (!HasReplayableArguments(message))
         {
             Report("MultiplayerQuestEventSkipped", message, pending.sourceActorId,

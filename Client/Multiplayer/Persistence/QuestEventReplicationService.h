@@ -2,6 +2,7 @@
 
 #include "Core/Diagnostics/Diagnostics.h"
 #include "Game/Quest/Sync/QuestLifecycleHook.h"
+#include "Game/Quest/Sync/QuestScreenHook.h"
 #include "Multiplayer/Protocol/PlayerState.h"
 #include "Multiplayer/Protocol/QuestEventMessage.h"
 #include "Multiplayer/Transport/ReliableMessageDispatcher.h"
@@ -55,6 +56,9 @@ namespace fable::multiplayer::persistence
         // Test seam used by acceptance drivers; lifecycle state queries go to
         // the same native predicates replay uses.
         [[nodiscard]] QuestLifecycleHook& Hook() noexcept { return hook_; }
+        // Quest card replays need the live script interface; the cutscene
+        // observer already binds it every frame.
+        void SetScriptInterfaceSource(void* const* scriptInterface) noexcept { scriptInterface_ = scriptInterface; }
 
     private:
         struct PendingReplay final
@@ -87,6 +91,14 @@ namespace fable::multiplayer::persistence
         static bool IsRemoteDuplicate(void* context,
             protocol::QuestEventOperation operation, const char* name) noexcept;
 
+        bool PublishScreen(const QuestScreenHook::Observation& observation);
+
+        QuestScreenHook screenHook_;
+        // Quest name -> when its card was last shown here (own script or
+        // replay); a peer's copy of the same card is not shown twice.
+        std::unordered_map<std::string, std::uint64_t> screenShownAt_;
+        static constexpr std::uint64_t ScreenDedupMilliseconds = 60'000;
+        void* const* scriptInterface_ = nullptr;
         UdpPeer* transport_ = nullptr;
         // Guards lastOperation_, read from quest-script threads.
         mutable std::mutex lastOperationMutex_;

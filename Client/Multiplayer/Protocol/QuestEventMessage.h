@@ -14,6 +14,9 @@ namespace fable::multiplayer::protocol
         Deactivate = 2,
         Complete = 3,
         Fail = 4,
+        // Present the quest card screen (start/completion) for the quest;
+        // arguments[0] carries the card mode. Not a lifecycle transition.
+        ShowQuestScreen = 5,
     };
 
     inline constexpr std::size_t MaximumQuestEventNameBytes = 96;

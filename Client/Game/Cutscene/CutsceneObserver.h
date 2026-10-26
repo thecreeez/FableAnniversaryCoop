@@ -21,6 +21,7 @@ namespace fable::game::cutscene
         bool Install(HMODULE gameModule, const core::Diagnostics& diagnostics) noexcept;
         // The retail CGameScriptInterface used to replay cutscenes.
         void BindScriptInterface(void* scriptInterface) noexcept { scriptInterface_ = scriptInterface; }
+        [[nodiscard]] void* const* ScriptInterfaceSlot() const noexcept { return &scriptInterface_; }
         void Shutdown() noexcept;
 
         // Game thread: samples the in-cutscene flag and reports transitions,

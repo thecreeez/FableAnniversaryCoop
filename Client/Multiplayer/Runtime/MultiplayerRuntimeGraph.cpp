@@ -129,6 +129,7 @@ namespace fable::multiplayer
         // save/load prologues, which questState patches on install.
         w.questEvents.Initialize(role, actorId, t.transport, diagnostics_);
         w.cutscenes.Install(GetModuleHandleW(nullptr), diagnostics_);
+        w.questEvents.SetScriptInterfaceSource(w.cutscenes.ScriptInterfaceSlot());
         w.scriptTracer.Install(GetModuleHandleW(nullptr), diagnostics_);
         w.hudMessageProbe.Install(GetModuleHandleW(nullptr), diagnostics_);
         w.questState.Initialize(
