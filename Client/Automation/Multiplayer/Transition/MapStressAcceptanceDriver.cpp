@@ -77,7 +77,7 @@ namespace fable::automation::multiplayer::transition
 
     void MapStressAcceptanceDriver::Tick() noexcept
     {
-        if (!enabled_ || completed_ || failed_ ||
+        if (!enabled_ || failed_ ||
             entities_ == nullptr || multiplayer_ == nullptr)
         {
             return;
@@ -86,7 +86,26 @@ namespace fable::automation::multiplayer::transition
         const std::uint64_t now = GetTickCount64();
         PeerMap local;
         PeerMap remote;
-        if (!ReadStableMaps(local, remote))
+        const bool mapsReadable = ReadStableMaps(local, remote);
+        if (completed_)
+        {
+            // Peers count reunion hops separately, so one can finish its
+            // budget while the other still roams. A finished peer that finds
+            // itself split again rejoins (guest) or holds (host) instead of
+            // leaving the other waiting forever.
+            if (!mapsReadable || local.id == remote.id)
+            {
+                return;
+            }
+            completed_ = false;
+            phaseReadyAt_ = now + InterTransitionSettleMilliseconds;
+            diagnostics_.Event(
+                "MultiplayerMapStressResumed",
+                host_ ? "role=host reason=peer-left-after-completion"
+                      : "role=guest reason=peer-left-after-completion");
+            return;
+        }
+        if (!mapsReadable)
         {
             settledAt_ = 0;
             if (transitionRequestedAt_ != 0 &&

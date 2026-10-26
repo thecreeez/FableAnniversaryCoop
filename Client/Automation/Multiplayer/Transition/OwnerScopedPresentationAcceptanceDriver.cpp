@@ -18,11 +18,26 @@ namespace
     // The route can finish on the same tick the peers reunite; the remote
     // presentation then still needs a moment to be rebuilt on the new map.
     constexpr std::uint64_t PostRouteOverlapGraceMilliseconds = 15'000;
+
+    // The owner mutation changes the active family and the ranged weapon's
+    // carry slot. Retail may later re-hang the stowed melee weapon on its own;
+    // that is a newer owner state, not a stale one, so it is not compared.
+    bool SameMutatedEquipmentState(
+        const fable::game::hero_pawn::equipment::HeroEquipmentState& expected,
+        const fable::game::hero_pawn::equipment::HeroEquipmentState& actual) noexcept
+    {
+        return expected.activeFamily == actual.activeFamily &&
+            expected.rangedDefinitionIndex == actual.rangedDefinitionIndex &&
+            expected.rangedAttachmentSlot == actual.rangedAttachmentSlot;
+    }
     // The retail sheathe/unsheathe request is accepted but often not taken
     // in town regions, so the owner mutation sets the drawn layout directly
     // through the same presentation path the mod uses to rebuild a Hero.
-    // Observed retail carry slots: 923 = ranged in hand.
+    // Observed retail carry slots: 923 = ranged in hand, 926 = melee on the
+    // back. Fixture Heroes load with weapons unattached (slot 0) and retail
+    // later re-hangs them; set the settled layout so it never shifts again.
     constexpr std::uint32_t RangedHandCarrySlot = 923;
+    constexpr std::uint32_t MeleeBackCarrySlot = 926;
     constexpr std::uint64_t WeaponDrawRetryMilliseconds = 5'000;
     constexpr unsigned int MaximumWeaponDrawAttempts = 3;
 }
@@ -158,7 +173,12 @@ namespace fable::automation::multiplayer::transition
         }
 
         const bool routeComplete = mapStress_->IsComplete();
-        if (routeComplete && routeCompletedAt_ == 0)
+        if (!routeComplete)
+        {
+            // A finished route can resume to reunite with a roaming peer.
+            routeCompletedAt_ = 0;
+        }
+        else if (routeCompletedAt_ == 0)
         {
             routeCompletedAt_ = GetTickCount64();
         }
@@ -225,6 +245,10 @@ namespace fable::automation::multiplayer::transition
         if (family == CreatureWeaponFamily::Ranged)
         {
             desired.rangedAttachmentSlot = RangedHandCarrySlot;
+            if (desired.meleeDefinitionIndex > 0 && desired.meleeAttachmentSlot == 0)
+            {
+                desired.meleeAttachmentSlot = MeleeBackCarrySlot;
+            }
         }
         return game::hero_pawn::equipment::native::HeroWeaponComponent::
             ApplyPresentation(*entities_, nativeHero, desired);
@@ -462,7 +486,7 @@ namespace fable::automation::multiplayer::transition
                 }
                 else if (!baseline->expectedClothing.Equals(
                              snapshot.state.heroClothing) ||
-                    !SameDurableEquipmentState(
+                    !SameMutatedEquipmentState(
                         baseline->expectedEquipment,
                         snapshot.state.heroEquipment))
                 {
