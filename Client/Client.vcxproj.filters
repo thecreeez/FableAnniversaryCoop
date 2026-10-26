@@ -347,6 +347,8 @@
     <ClCompile Include="Multiplayer\Persistence\QuestStateAuthorityService.cpp"><Filter>Multiplayer\Persistence</Filter></ClCompile>
     <ClCompile Include="Multiplayer\Persistence\QuestEventReplicationService.cpp"><Filter>Multiplayer\Persistence</Filter></ClCompile>
     <ClCompile Include="Game\Cutscene\CutsceneObserver.cpp"><Filter>Game\Quest\Persistence</Filter></ClCompile>
+    <ClCompile Include="Game\Native\ScriptInterfaceTracer.cpp"><Filter>Game\Quest\Persistence</Filter></ClCompile>
+    <ClCompile Include="Game\Native\HudMessageProbe.cpp"><Filter>Game\Quest\Persistence</Filter></ClCompile>
     <ClCompile Include="Multiplayer\World\CutsceneSyncService.cpp"><Filter>Multiplayer\Persistence</Filter></ClCompile>
     <ClCompile Include="Multiplayer\Protocol\CutsceneMessage.cpp"><Filter>Multiplayer\Protocol</Filter></ClCompile>
     <ClCompile Include="Multiplayer\Persistence\QuestFieldSyncService.cpp"><Filter>Multiplayer\Persistence</Filter></ClCompile>

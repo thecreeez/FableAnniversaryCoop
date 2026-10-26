@@ -1,5 +1,7 @@
 #include "EntityMaterializationService.h"
 
+#include <algorithm>
+
 #include "Game/Entity/Entity.h"
 #include "Game/Entity/EntityService.h"
 #include "Game/NPC/Simulation/DummyVillager/DummyVillagerService.h"
@@ -279,6 +281,15 @@ namespace fable::multiplayer::entities
             pending_.erase(record.thingUid);
             return true;
         }
+        if (AdoptByScriptGroup(
+                record,
+                directory,
+                liveEntities,
+                localMap))
+        {
+            pending_.erase(record.thingUid);
+            return true;
+        }
         std::string definitionName;
         if (!ResolveDefinitionName(record, definitionName))
         {
@@ -380,6 +391,94 @@ namespace fable::multiplayer::entities
                 "adopted-retail-script-identity");
         }
         return adopted;
+    }
+
+    bool EntityMaterializationService::AdoptByScriptGroup(
+        const WorldEntityRecord& record,
+        const WorldEntityDirectory& directory,
+        const LiveEntityRegistry& liveEntities,
+        const std::string& localMap)
+    {
+        if (presence_ == nullptr || identities_ == nullptr ||
+            record.scriptName.empty() ||
+            (!record.mapName.empty() && record.mapName != localMap))
+        {
+            return false;
+        }
+
+        // Quest scripts run on every peer and spawn the same group of
+        // creatures (five HornetDrone wasps) in the same order, each with a
+        // process-local UID. Pair the canonical group and the local group
+        // by spawn order (UIDs grow with spawn order on both sides) so this
+        // peer's script keeps commanding the creature the host simulates.
+        const auto sameGroup = [&record](const std::string& scriptName,
+                                         const std::uint32_t definitionIndex,
+                                         const std::uint16_t mapId)
+        {
+            return scriptName == record.scriptName &&
+                definitionIndex == record.definitionIndex &&
+                (mapId == 0 || record.mapId == 0 || mapId == record.mapId);
+        };
+
+        const std::vector<LiveEntityRecord> live = liveEntities.Snapshot();
+        const auto liveWithUid = [&live](const std::uint64_t uid)
+        {
+            for (const LiveEntityRecord& candidate : live)
+            {
+                if (candidate.thing != nullptr && candidate.thingUid == uid) return true;
+            }
+            return false;
+        };
+
+        std::vector<std::uint64_t> canonicalOpen;
+        std::size_t canonicalCount = 0;
+        for (const WorldEntityRecord& candidate : directory.Snapshot())
+        {
+            if (!candidate.live || !candidate.available ||
+                !sameGroup(candidate.scriptName, candidate.definitionIndex, candidate.mapId))
+            {
+                continue;
+            }
+            ++canonicalCount;
+            // Already represented here, by alias or by an identical UID.
+            if (identities_->FindLocal(candidate.thingUid) != 0 || liveWithUid(candidate.thingUid))
+            {
+                continue;
+            }
+            canonicalOpen.push_back(candidate.thingUid);
+        }
+        if (canonicalCount < 2) return false;  // unique identities use the strict path
+
+        std::vector<std::uint64_t> localOpen;
+        for (const LiveEntityRecord& candidate : live)
+        {
+            if (candidate.thing == nullptr || candidate.thingUid == 0 || !candidate.creature ||
+                !sameGroup(candidate.scriptName, candidate.definitionIndex, candidate.mapId))
+            {
+                continue;
+            }
+            // Skip creatures already bound to, or themselves, canonical records.
+            if (identities_->Canonicalize(candidate.thingUid) != candidate.thingUid ||
+                directory.Find(candidate.thingUid) != nullptr)
+            {
+                continue;
+            }
+            localOpen.push_back(candidate.thingUid);
+        }
+        std::sort(canonicalOpen.begin(), canonicalOpen.end());
+        std::sort(localOpen.begin(), localOpen.end());
+        const auto rankIt = std::find(canonicalOpen.begin(), canonicalOpen.end(), record.thingUid);
+        if (rankIt == canonicalOpen.end()) return false;
+        const std::size_t rank = static_cast<std::size_t>(rankIt - canonicalOpen.begin());
+        if (rank >= localOpen.size() || !presence_->BindNetworkIdentity(record.thingUid, localOpen[rank]))
+        {
+            return false;
+        }
+        Report(
+            "MultiplayerEntityMaterialized",
+            record,
+            "adopted-retail-script-group-by-spawn-order");
+        return true;
     }
 
     bool EntityMaterializationService::AdoptBySimulationIdentity(

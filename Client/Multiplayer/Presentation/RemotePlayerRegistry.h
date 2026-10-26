@@ -89,6 +89,7 @@ namespace fable::multiplayer::presentation
         void Remove(std::uint64_t actorId) noexcept;
         void BeginWorldTransition() noexcept;
         void CompleteWorldTransition() noexcept;
+        void SetCutsceneHidden(bool hidden) noexcept;
         void DriveMovement();
         bool ApplyHealth(
             std::uint64_t actorId,

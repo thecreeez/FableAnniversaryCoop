@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <new>
 
 namespace
 {
@@ -28,6 +29,13 @@ namespace
     constexpr std::uintptr_t MovieResourceBaseConstructorRva = 0x012B5060;
     constexpr std::uintptr_t MovieResourceVtableRva = 0x02A5CD38;
     constexpr std::size_t MovieResourceBytes = 0x20;
+    constexpr std::uintptr_t EndScriptedSequenceRva = 0x0189E940;
+    // The sequence guard's destructor (0x018899C0) then drops the player
+    // mode the sequence pushed: RemoveMode(0x1B) on the player controller
+    // resolved from interface +0x14 / +0x1C.
+    constexpr std::uintptr_t ResolvePlayerControllerRva = 0x018FD6F0;
+    constexpr std::uintptr_t RemovePlayerModeRva = 0x018FF7B0;
+    constexpr std::int32_t ScriptedSequencePlayerMode = 0x1B;
 
     void ReadName(void* const name, char* const destination, const std::size_t capacity) noexcept
     {
@@ -253,6 +261,92 @@ namespace fable::game::cutscene
             diagnostics_.Event("CutsceneReplayFaulted", detail);
         }
         return played;
+    }
+
+    bool CutsceneObserver::SetCutsceneMode(const bool enabled) noexcept
+    {
+        void* const iface = scriptInterface_;
+        if (iface == nullptr) return false;
+        using SetCutsceneModeFn = void(__thiscall*)(void*, int);
+        __try
+        {
+            void* const* const vtable = *reinterpret_cast<void* const* const*>(iface);
+            reinterpret_cast<SetCutsceneModeFn>(vtable[SetCutsceneModeSlot])(iface, enabled ? 1 : 0);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool CutsceneObserver::EndScriptedSequence() noexcept
+    {
+        void* const iface = scriptInterface_;
+        if (iface == nullptr || gameModule_ == nullptr) return false;
+        const auto base = reinterpret_cast<std::uintptr_t>(gameModule_);
+        using EndFn = void(__thiscall*)(void*);
+        using ResolveFn = void*(__thiscall*)(void*, std::uint32_t);
+        using RemoveModeFn = void(__thiscall*)(void*, std::int32_t);
+        __try
+        {
+            reinterpret_cast<EndFn>(base + EndScriptedSequenceRva)(iface);
+            auto* const fields = static_cast<std::uint8_t*>(iface);
+            void* const controller = reinterpret_cast<ResolveFn>(base + ResolvePlayerControllerRva)(
+                *reinterpret_cast<void**>(fields + 0x14), *reinterpret_cast<std::uint32_t*>(fields + 0x1C));
+            if (controller != nullptr)
+            {
+                reinterpret_cast<RemoveModeFn>(base + RemovePlayerModeRva)(controller, ScriptedSequencePlayerMode);
+            }
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    bool CutsceneObserver::BeginScriptedSequence() noexcept
+    {
+        void* const iface = scriptInterface_;
+        if (iface == nullptr || gameModule_ == nullptr) return false;
+        using CharStringConstructor = void(__thiscall*)(native::CharString*, const char*, int);
+        using CharStringDestructor = void(__thiscall*)(native::CharString*);
+        using BaseConstructor = void(__thiscall*)(void*);
+        using CreateMovieResource = void(__thiscall*)(void*, const native::CharString*, void*);
+        const auto base = reinterpret_cast<std::uintptr_t>(gameModule_);
+        // Never freed: destroying it would end the sequence a second time.
+        auto* const movie = static_cast<std::uint8_t*>(::operator new(MovieResourceBytes, std::nothrow));
+        if (movie == nullptr) return false;
+        std::memset(movie, 0, MovieResourceBytes);
+        native::CharString resource = {};
+        bool built = false;
+        bool begun = false;
+        __try
+        {
+            void* const* const vtable = *reinterpret_cast<void* const* const*>(iface);
+            reinterpret_cast<BaseConstructor>(base + MovieResourceBaseConstructorRva)(movie);
+            *reinterpret_cast<std::uintptr_t*>(movie) = base + MovieResourceVtableRva;
+            reinterpret_cast<CharStringConstructor>(base + native::rva::CharStringConstructor)(&resource, "", -1);
+            built = true;
+            reinterpret_cast<CreateMovieResource>(vtable[CreateMovieResourceSlot])(iface, &resource, movie);
+            begun = true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            begun = false;
+        }
+        if (built)
+        {
+            __try
+            {
+                reinterpret_cast<CharStringDestructor>(base + native::rva::CharStringDestructor)(&resource);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+            }
+        }
+        return begun;
     }
 
     bool CutsceneObserver::YieldScriptFrame() noexcept

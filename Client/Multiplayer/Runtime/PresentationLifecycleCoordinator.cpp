@@ -53,6 +53,18 @@ namespace fable::multiplayer
                 hero != nullptr ? hero->position.y : 0.0f,
                 hero != nullptr ? hero->position.z : 0.0f);
         }
+        {
+            // Hide remote Heroes for the length of a local cutscene; re-assert
+            // every frame so a presentation rebuilt mid-cutscene is hidden too.
+            const bool inCutscene = world.cutscenes.IsInCutscene();
+            if (inCutscene || cutsceneHidden_)
+            {
+                players.remotePlayers.SetCutsceneHidden(inCutscene);
+                cutsceneHidden_ = inCutscene;
+            }
+        }
+        world.scriptTracer.Process();
+        world.hudMessageProbe.Process();
         if (!world.cutsceneSync.Process())
         {
             diagnostics.Event("ClientFailed", "multiplayer-cutscene-sync");

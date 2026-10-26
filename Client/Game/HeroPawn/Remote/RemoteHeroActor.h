@@ -128,6 +128,10 @@ namespace fable::game::hero_pawn::remote
             std::uint64_t receivedAt);
         void BeginWorldTransition() noexcept;
         void CompleteWorldTransition() noexcept;
+        // While a local cutscene plays, every peer's own script has moved its
+        // own Hero onto the same camera mark; hide remote Heroes so two do
+        // not stand in one spot on screen.
+        void SetCutsceneHidden(bool hidden) noexcept;
         void DriveMovement();
         bool ApplyHealth(
             float currentHealth,

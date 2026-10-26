@@ -85,6 +85,7 @@ namespace fable::multiplayer::persistence
             return;
         }
         enabled_ = hook_.Install(GetModuleHandleW(nullptr), diagnostics_);
+        if (enabled_) hook_.SetDuplicateFilter(&IsRemoteDuplicate, this);
         if (!enabled_)
         {
             diagnostics_.Event(
@@ -93,8 +94,30 @@ namespace fable::multiplayer::persistence
         }
     }
 
+    bool QuestEventReplicationService::IsRemoteDuplicate(
+        void* const context, const QuestEventOperation operation, const char* const name) noexcept
+    {
+        // Only a completion or failure pays out; a peer-driven one already did.
+        if (operation != QuestEventOperation::Complete && operation != QuestEventOperation::Fail)
+        {
+            return false;
+        }
+        auto* const self = static_cast<QuestEventReplicationService*>(context);
+        std::lock_guard<std::mutex> lock(self->lastOperationMutex_);
+        try
+        {
+            const auto last = self->lastOperation_.find(name);
+            return last != self->lastOperation_.end() && last->second == operation;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
     void QuestEventReplicationService::Shutdown() noexcept
     {
+        hook_.SetDuplicateFilter(nullptr, nullptr);
         hook_.Shutdown();
         transport_ = nullptr;
         diagnostics_ = {};
@@ -103,7 +126,10 @@ namespace fable::multiplayer::persistence
         nextRevision_ = 0;
         outbound_.clear();
         pending_.clear();
-        lastOperation_.clear();
+        {
+            std::lock_guard<std::mutex> lock(lastOperationMutex_);
+            lastOperation_.clear();
+        }
         enabled_ = false;
     }
 
@@ -163,6 +189,7 @@ namespace fable::multiplayer::persistence
         message.revision = ++nextRevision_;
         try
         {
+            std::lock_guard<std::mutex> lock(lastOperationMutex_);
             lastOperation_[observation.name] = observation.operation;
         }
         catch (...)
@@ -265,10 +292,13 @@ namespace fable::multiplayer::persistence
 
     bool QuestEventReplicationService::NeedsReplay(const QuestEventMessage& message) const
     {
-        const auto last = lastOperation_.find(message.name);
-        if (last != lastOperation_.end() && last->second == message.operation)
         {
-            return false;
+            std::lock_guard<std::mutex> lock(lastOperationMutex_);
+            const auto last = lastOperation_.find(message.name);
+            if (last != lastOperation_.end() && last->second == message.operation)
+            {
+                return false;
+            }
         }
         const bool active = hook_.IsActive(message.name);
         const bool completed = hook_.IsCompleted(message.name);
@@ -301,6 +331,7 @@ namespace fable::multiplayer::persistence
             {
                 try
                 {
+                    std::lock_guard<std::mutex> lock(lastOperationMutex_);
                     lastOperation_[message.name] = message.operation;
                 }
                 catch (...)

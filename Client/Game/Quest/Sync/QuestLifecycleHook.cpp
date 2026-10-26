@@ -171,6 +171,7 @@ namespace fable::multiplayer::persistence
     {
         QuestLifecycleHook* const self = active_;
         if (self == nullptr || self->originalActivate_ == nullptr) return false;
+        if (!replaying_ && self->IsDuplicate(QuestEventOperation::Activate, name)) return true;
         const bool accepted = self->originalActivate_(manager, name, a2, a3);
         self->generation_.fetch_add(1, std::memory_order_acq_rel);
         if (accepted && !replaying_)
@@ -186,6 +187,7 @@ namespace fable::multiplayer::persistence
     {
         QuestLifecycleHook* const self = active_;
         if (self == nullptr || self->originalDeactivate_ == nullptr) return;
+        if (!replaying_ && self->IsDuplicate(QuestEventOperation::Deactivate, name)) return;
         // Capture the name first: retail may release the quest card that
         // owns the string during deactivation.
         if (!replaying_) self->Record(QuestEventOperation::Deactivate, name, a2, 0, 0);
@@ -199,6 +201,7 @@ namespace fable::multiplayer::persistence
     {
         QuestLifecycleHook* const self = active_;
         if (self == nullptr || self->originalComplete_ == nullptr) return;
+        if (!replaying_ && self->IsDuplicate(QuestEventOperation::Complete, name)) return;
         if (!replaying_) self->Record(QuestEventOperation::Complete, name, a2, a3, a4);
         self->originalComplete_(manager, name, a2, a3, a4);
         self->generation_.fetch_add(1, std::memory_order_acq_rel);
@@ -210,9 +213,26 @@ namespace fable::multiplayer::persistence
     {
         QuestLifecycleHook* const self = active_;
         if (self == nullptr || self->originalFail_ == nullptr) return;
+        if (!replaying_ && self->IsDuplicate(QuestEventOperation::Fail, name)) return;
         if (!replaying_) self->Record(QuestEventOperation::Fail, name, a2, a3, a4);
         self->originalFail_(manager, name, a2, a3, a4);
         self->generation_.fetch_add(1, std::memory_order_acq_rel);
+    }
+
+    bool QuestLifecycleHook::IsDuplicate(
+        const QuestEventOperation operation,
+        const game::native::CharString* const name) noexcept
+    {
+        const DuplicateFilter filter = duplicateFilter_;
+        if (filter == nullptr) return false;
+        char buffer[protocol::MaximumQuestEventNameBytes] = {};
+        if (!ReadName(name, buffer, sizeof(buffer))) return false;
+        if (!filter(duplicateContext_, operation, buffer)) return false;
+        char detail[160] = {};
+        std::snprintf(detail, sizeof(detail), "op=%u quest=%s",
+            static_cast<unsigned>(operation), buffer);
+        diagnostics_.Event("MultiplayerQuestDuplicateSuppressed", detail);
+        return true;
     }
 
     void QuestLifecycleHook::Record(

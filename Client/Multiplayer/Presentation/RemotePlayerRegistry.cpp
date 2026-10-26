@@ -203,6 +203,15 @@ namespace fable::multiplayer::presentation
         }
     }
 
+    void RemotePlayerRegistry::SetCutsceneHidden(const bool hidden) noexcept
+    {
+        for (auto& [actorId, presentation] : presentations_)
+        {
+            (void)actorId;
+            if (presentation != nullptr) presentation->SetCutsceneHidden(hidden);
+        }
+    }
+
     void RemotePlayerRegistry::DriveMovement()
     {
         for (auto& [actorId, presentation] : presentations_)

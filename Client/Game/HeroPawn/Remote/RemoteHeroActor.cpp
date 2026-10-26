@@ -492,6 +492,12 @@ namespace fable::game::hero_pawn::remote
             "source native presentation released before world teardown; destination awaits its complete current baseline");
     }
 
+    void RemoteHeroActor::SetCutsceneHidden(const bool hidden) noexcept
+    {
+        if (avatar_ == nullptr) return;
+        avatar_->SetDrawable(!hidden);
+    }
+
     void RemoteHeroActor::DriveMovement()
     {
         if (lifecycle_ != nullptr)

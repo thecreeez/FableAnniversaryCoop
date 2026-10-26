@@ -44,6 +44,18 @@ namespace fable::game::cutscene
         // the way retail scripts wait. Scripts run in lockstep with the game
         // thread, so a script must never block in a plain sleep.
         bool YieldScriptFrame() noexcept;
+        // Script thread: retail cutscene mode (interface slot 397). Quest
+        // scripts enter it just before the start call, which freezes the Hero.
+        bool SetCutsceneMode(bool enabled) noexcept;
+        // Script thread: the retail scripted sequence (interface slot 388
+        // begins it: HUD hidden, player input off, interface +0x2C set; the
+        // guard it leaves in the movie resource ends it, 0x0189E940, when the
+        // script destroys that resource after the cutscene). Ending lends
+        // control back; beginning again uses a mod-owned movie resource that
+        // is deliberately never destroyed, so the script's own guard is the
+        // only one that ends the sequence after the cutscene.
+        bool EndScriptedSequence() noexcept;
+        bool BeginScriptedSequence() noexcept;
 
     private:
         using StartFn = std::uintptr_t(__cdecl*)(

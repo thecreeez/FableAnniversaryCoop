@@ -129,10 +129,13 @@ namespace fable::multiplayer
         // save/load prologues, which questState patches on install.
         w.questEvents.Initialize(role, actorId, t.transport, diagnostics_);
         w.cutscenes.Install(GetModuleHandleW(nullptr), diagnostics_);
+        w.scriptTracer.Install(GetModuleHandleW(nullptr), diagnostics_);
+        w.hudMessageProbe.Install(GetModuleHandleW(nullptr), diagnostics_);
         w.questState.Initialize(
             role, actorId, t.transport, diagnostics_, sessionAuthorityEpoch);
         w.questFields.Initialize(role, actorId, t.transport, w.questEvents, diagnostics_);
-        w.cutsceneSync.Initialize(role, actorId, t.transport, p.localHero, t.remotePlayerChannels, w.cutscenes, entities, diagnostics_);
+        w.cutsceneSync.Initialize(role, actorId, t.transport, p.localHero, t.remotePlayerChannels, w.cutscenes, entities,
+            e.entityPresence.LiveEntities(), diagnostics_);
         if (!w.worldSections.Initialize(
                 role, actorId, t.transport, diagnostics_,
                 sessionAuthorityEpoch))
@@ -288,6 +291,8 @@ namespace fable::multiplayer
             w.hostWorldState.Shutdown();
             w.worldSections.Shutdown();
             w.cutsceneSync.Shutdown();
+            w.scriptTracer.Shutdown();
+            w.hudMessageProbe.Shutdown();
             w.cutscenes.Shutdown();
             w.questFields.Shutdown();
             w.questEvents.Shutdown();

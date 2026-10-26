@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -83,7 +84,12 @@ namespace fable::multiplayer::persistence
         void Report(const char* event, const protocol::QuestEventMessage& message,
             std::uint64_t sourceActorId, const char* outcome) const noexcept;
 
+        static bool IsRemoteDuplicate(void* context,
+            protocol::QuestEventOperation operation, const char* name) noexcept;
+
         UdpPeer* transport_ = nullptr;
+        // Guards lastOperation_, read from quest-script threads.
+        mutable std::mutex lastOperationMutex_;
         core::Diagnostics diagnostics_ = {};
         QuestLifecycleHook hook_;
         PeerRole role_ = PeerRole::Guest;

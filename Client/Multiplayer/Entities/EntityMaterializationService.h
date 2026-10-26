@@ -105,6 +105,11 @@ namespace fable::multiplayer::entities
             const WorldEntityDirectory& directory,
             const LiveEntityRegistry& liveEntities,
             const std::string& localMap);
+        bool AdoptByScriptGroup(
+            const WorldEntityRecord& record,
+            const WorldEntityDirectory& directory,
+            const LiveEntityRegistry& liveEntities,
+            const std::string& localMap);
         bool AdoptBySimulationIdentity(
             const WorldEntityRecord& record,
             const LiveEntityRegistry& liveEntities,

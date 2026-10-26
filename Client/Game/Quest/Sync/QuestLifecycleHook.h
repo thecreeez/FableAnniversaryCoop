@@ -35,6 +35,18 @@ namespace fable::multiplayer::persistence
         };
 
         bool Install(HMODULE gameModule, const core::Diagnostics& diagnostics) noexcept;
+
+        // Asked before a local (non-replayed) transition runs. Returning true
+        // skips the retail call: the same transition already arrived from a
+        // peer, and running it again would, for a completion, pay the reward
+        // twice. Called on whichever thread runs the quest script.
+        using DuplicateFilter = bool (*)(void* context,
+            protocol::QuestEventOperation operation, const char* name) noexcept;
+        void SetDuplicateFilter(DuplicateFilter filter, void* context) noexcept
+        {
+            duplicateContext_ = context;
+            duplicateFilter_ = filter;
+        }
         void Shutdown() noexcept;
 
         // Moves at most one queued local observation into `observation`.
@@ -92,6 +104,8 @@ namespace fable::multiplayer::persistence
             void* manager, void*, game::native::CharString* name,
             std::uint32_t a2, std::uint32_t a3, std::uint32_t a4);
 
+        bool IsDuplicate(protocol::QuestEventOperation operation,
+            const game::native::CharString* name) noexcept;
         void Record(
             protocol::QuestEventOperation operation,
             const game::native::CharString* name,
@@ -125,5 +139,7 @@ namespace fable::multiplayer::persistence
         std::size_t queueCount_ = 0;
         std::size_t dropped_ = 0;
         std::atomic_uint32_t generation_{0};
+        DuplicateFilter duplicateFilter_ = nullptr;
+        void* duplicateContext_ = nullptr;
     };
 }
