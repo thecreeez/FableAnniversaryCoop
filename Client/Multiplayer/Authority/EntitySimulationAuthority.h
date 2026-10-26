@@ -43,6 +43,8 @@ namespace fable::multiplayer::authority
     class EntitySimulationAuthority final
     {
     public:
+        // Whether this process runs the native AI of that creature.
+        [[nodiscard]] bool IsLocallySimulated(void* creature) const noexcept { return CanSimulate(creature); }
         void Initialize(
             std::uint64_t localActorId,
             AuthorityReplication& authority,

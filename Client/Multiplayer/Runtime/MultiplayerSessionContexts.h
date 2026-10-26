@@ -7,6 +7,7 @@
 #include "Game/Cutscene/CutsceneObserver.h"
 #include "Game/Native/ScriptInterfaceTracer.h"
 #include "Game/Native/HudMessageProbe.h"
+#include "Multiplayer/Combat/EnemyTargetDistributor.h"
 #include "Multiplayer/Authority/AuthorityReplication.h"
 #include "Multiplayer/Authority/EntitySimulationAuthority.h"
 #include "Multiplayer/Combat/PlayerCombatantDirectory.h"
@@ -97,6 +98,7 @@ namespace fable::multiplayer
         replication::CombatHitReplication combatHits;
         replication::EntityVitalsReplication entityVitals;
         combat::PlayerDeathCoordinator playerDeath;
+        combat::EnemyTargetDistributor enemyTargets;
     };
 
     struct MultiplayerSessionContexts final

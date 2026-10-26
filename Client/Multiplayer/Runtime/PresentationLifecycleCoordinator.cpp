@@ -235,6 +235,7 @@ namespace fable::multiplayer
         if (!actions.entityActions.ProcessPending(localMap, ownerRosterReady)) diagnostics.Event("ClientFailed", "multiplayer-entity-action-replication");
         if (!actions.combatHits.Process()) diagnostics.Event("ClientFailed", "multiplayer-combat-hit-replication");
         if (!actions.playerDeath.Process(localHero)) diagnostics.Event("ClientFailed", "multiplayer-player-death");
+        actions.enemyTargets.Process();
         if (!actions.entityVitals.Process(localHero, entityPresence.LiveEntities(), remotePlayers)) diagnostics.Event("ClientFailed", "multiplayer-entity-vitals-replication");
         return false;
     }

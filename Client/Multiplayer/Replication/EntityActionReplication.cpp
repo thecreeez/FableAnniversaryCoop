@@ -350,6 +350,7 @@ namespace fable::multiplayer::replication
             {
                 return true;
             }
+            RecordEngagement(event);
             return BindLocalAbilityAction(event) ||
                 BeginLocalAction(event, localMap, mapEpoch);
         }
@@ -358,6 +359,43 @@ namespace fable::multiplayer::replication
             return FinishLocalAction(event.action);
         }
         return true;
+    }
+
+    void EntityActionReplication::RecordEngagement(
+        const game::creature::actions::CreatureActionLifecycleEvent& event)
+    {
+        if (event.creature == nullptr || event.targetCreature == nullptr ||
+            event.thingUid == 0 || combatants_ == nullptr ||
+            combatants_->FindActor(event.creature) != 0 ||
+            combatants_->FindActor(event.targetCreature) == 0)
+        {
+            return;
+        }
+        try
+        {
+            engagements_[event.thingUid] = {event.creature, GetTickCount64()};
+        }
+        catch (...)
+        {
+        }
+    }
+
+    std::vector<EntityActionReplication::Engagement>
+        EntityActionReplication::EngagedCreatures(
+            const std::uint64_t now, const std::uint64_t window)
+    {
+        std::vector<Engagement> engaged;
+        for (auto iterator = engagements_.begin(); iterator != engagements_.end();)
+        {
+            if (now - iterator->second.second > window)
+            {
+                iterator = engagements_.erase(iterator);
+                continue;
+            }
+            engaged.push_back({iterator->first, iterator->second.first});
+            ++iterator;
+        }
+        return engaged;
     }
 
     bool EntityActionReplication::BeginLocalAction(

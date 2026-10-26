@@ -7,6 +7,8 @@
 #include "Multiplayer/Protocol/PlayerState.h"
 #include "Multiplayer/Transport/ReliableMessageDispatcher.h"
 
+#include <utility>
+#include <vector>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -51,6 +53,16 @@ namespace fable::multiplayer::replication
     class EntityActionReplication final : public ReliableMessageSink
     {
     public:
+        // NPCs this process simulates that recently aimed an action at a
+        // player (local or remote Hero). Game thread.
+        struct Engagement final
+        {
+            std::uint64_t thingUid = 0;
+            void* creature = nullptr;
+        };
+        [[nodiscard]] std::vector<Engagement> EngagedCreatures(
+            std::uint64_t now, std::uint64_t window);
+
         [[nodiscard]] ReliableMessageTypeSet HandledPacketTypes()
             const noexcept override
         {
@@ -167,6 +179,10 @@ namespace fable::multiplayer::replication
             const protocol::EntityActionMessage& message);
         bool ReplayAuthoritativeAbility(ActiveAction& action);
         bool ReplayAuthoritativeUseObject(ActiveAction& action);
+        void RecordEngagement(
+            const game::creature::actions::CreatureActionLifecycleEvent& event);
+        // creature pointer + local native uid -> last time it acted on a player
+        std::unordered_map<std::uint64_t, std::pair<void*, std::uint64_t>> engagements_;
         bool ReplayAuthoritativeNativeAction(ActiveAction& action);
         bool ReplayPendingAbilities();
         bool ReplayPendingNativeActions();
