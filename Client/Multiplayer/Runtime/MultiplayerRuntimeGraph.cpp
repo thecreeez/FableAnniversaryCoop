@@ -128,9 +128,11 @@ namespace fable::multiplayer
         // Before questState: the executable validator checks the quest
         // save/load prologues, which questState patches on install.
         w.questEvents.Initialize(role, actorId, t.transport, diagnostics_);
+        w.cutscenes.Install(GetModuleHandleW(nullptr), diagnostics_);
         w.questState.Initialize(
             role, actorId, t.transport, diagnostics_, sessionAuthorityEpoch);
         w.questFields.Initialize(role, actorId, t.transport, w.questEvents, diagnostics_);
+        w.cutsceneSync.Initialize(role, actorId, t.transport, p.localHero, t.remotePlayerChannels, w.cutscenes, entities, diagnostics_);
         if (!w.worldSections.Initialize(
                 role, actorId, t.transport, diagnostics_,
                 sessionAuthorityEpoch))
@@ -285,6 +287,8 @@ namespace fable::multiplayer
             w.savedEntityMapBaseline.Shutdown();
             w.hostWorldState.Shutdown();
             w.worldSections.Shutdown();
+            w.cutsceneSync.Shutdown();
+            w.cutscenes.Shutdown();
             w.questFields.Shutdown();
             w.questEvents.Shutdown();
             w.questState.Shutdown();

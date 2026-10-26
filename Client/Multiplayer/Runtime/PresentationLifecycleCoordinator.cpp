@@ -45,6 +45,18 @@ namespace fable::multiplayer
         {
             diagnostics.Event("ClientFailed", "multiplayer-quest-event-replication");
         }
+        {
+            const auto* const hero = players.localHero.CurrentState();
+            world.cutscenes.Process(
+                hero != nullptr ? hero->mapName.c_str() : "",
+                hero != nullptr ? hero->position.x : 0.0f,
+                hero != nullptr ? hero->position.y : 0.0f,
+                hero != nullptr ? hero->position.z : 0.0f);
+        }
+        if (!world.cutsceneSync.Process())
+        {
+            diagnostics.Event("ClientFailed", "multiplayer-cutscene-sync");
+        }
         if (!world.questFields.Process())
         {
             diagnostics.Event("ClientFailed", "multiplayer-quest-field-sync");

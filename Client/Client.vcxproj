@@ -219,6 +219,9 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClCompile Include="Multiplayer\Persistence\HostWorldStateProjection.cpp" />
     <ClCompile Include="Multiplayer\Persistence\QuestStateAuthorityService.cpp" />
     <ClCompile Include="Multiplayer\Persistence\QuestEventReplicationService.cpp" />
+    <ClCompile Include="Game\Cutscene\CutsceneObserver.cpp" />
+    <ClCompile Include="Multiplayer\World\CutsceneSyncService.cpp" />
+    <ClCompile Include="Multiplayer\Protocol\CutsceneMessage.cpp" />
     <ClCompile Include="Multiplayer\Persistence\QuestFieldSyncService.cpp" />
     <ClCompile Include="Game\Quest\Sync\QuestFieldRecorder.cpp" />
     <ClCompile Include="Multiplayer\Protocol\QuestFieldMessage.cpp" />
@@ -530,6 +533,9 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClInclude Include="Multiplayer\Persistence\HostWorldStateProjection.h" />
     <ClInclude Include="Multiplayer\Persistence\QuestStateAuthorityService.h" />
     <ClInclude Include="Multiplayer\Persistence\QuestEventReplicationService.h" />
+    <ClInclude Include="Game\Cutscene\CutsceneObserver.h" />
+    <ClInclude Include="Multiplayer\World\CutsceneSyncService.h" />
+    <ClInclude Include="Multiplayer\Protocol\CutsceneMessage.h" />
     <ClInclude Include="Multiplayer\Persistence\QuestFieldSyncService.h" />
     <ClInclude Include="Game\Quest\Sync\QuestFieldRecorder.h" />
     <ClInclude Include="Multiplayer\Protocol\QuestFieldMessage.h" />

@@ -17,6 +17,10 @@ namespace
     constexpr const char* GuestField = "SaveWarningsGiven";
     constexpr std::uint32_t HostFieldValue = 77;
     constexpr std::uint32_t GuestFieldValue = 5;
+    // A harmless global world flag from the master-quest data object.
+    constexpr const char* WorldFlagQuest = "Q_SunnyvaleMaster";
+    constexpr const char* WorldFlag = "ArcheryHighScore";
+    constexpr std::uint32_t WorldFlagValue = 123;
 
     // Retail quests already sampled by the appearance-cycle script. The
     // driver uses the first one that is neither active nor completed in the
@@ -106,23 +110,6 @@ namespace fable::automation::multiplayer::quest
                     baselineActive_[index] ? 1 : 0, baselineCompleted_[index] ? 1 : 0);
                 diagnostics_.Event("QuestSyncBaseline", detail);
             }
-            // Retail records a completion only through the quest's card
-            // object, so the completion leg uses a quest that is already
-            // running in the fixture (and therefore has its card) on both
-            // peers, rather than the one this test activated.
-            for (std::size_t index = 0; index < CandidateCount; ++index)
-            {
-                if (baselineActive_[index] && !baselineCompleted_[index])
-                {
-                    completionTarget_ = index;
-                    break;
-                }
-            }
-            if (completionTarget_ == CandidateCount)
-            {
-                Fail("fixture-has-no-running-candidate-quest");
-                return false;
-            }
             Enter(host_ ? Phase::HostActivate : Phase::GuestAwaitActive, now);
             return true;
 
@@ -138,6 +125,7 @@ namespace fable::automation::multiplayer::quest
                 if (accepted && hook.IsActive(Candidates[index]))
                 {
                     chosen_ = index;
+                    completionTarget_ = index;
                     std::snprintf(detail, sizeof(detail), "quest=%s", Candidates[index]);
                     diagnostics_.Event("QuestSyncHostActivated", detail);
                     Enter(Phase::HostAwaitCompleted, now);
@@ -158,6 +146,9 @@ namespace fable::automation::multiplayer::quest
                     hook.IsActive(Candidates[index]))
                 {
                     chosen_ = index;
+                    // Finish the quest the host just started. Never the always-
+                    // running master quest, whose data holds the world flags.
+                    completionTarget_ = index;
                     std::snprintf(detail, sizeof(detail), "quest=%s", Candidates[index]);
                     diagnostics_.Event("QuestSyncGuestObservedActive", detail);
                     Enter(Phase::GuestComplete, now);
@@ -270,7 +261,7 @@ namespace fable::automation::multiplayer::quest
                 }
                 std::snprintf(detail, sizeof(detail), "quest=%s field=%s value=%u", FieldQuest, GuestField, GuestFieldValue);
                 diagnostics_.Event("QuestFieldGuestWrote", detail);
-                Enter(Phase::Done, now);
+                Enter(Phase::GuestAwaitWorldFlag, now);
                 return true;
             }
             if (now - phaseStartedAt_ > PhaseTimeoutMilliseconds) Fail("guest-never-saw-host-field");
@@ -285,10 +276,39 @@ namespace fable::automation::multiplayer::quest
             {
                 std::snprintf(detail, sizeof(detail), "quest=%s field=%s value=%u", FieldQuest, GuestField, value);
                 diagnostics_.Event("QuestFieldHostObserved", detail);
-                Enter(Phase::Done, now);
+                Enter(Phase::HostWriteWorldFlag, now);
                 return true;
             }
             if (now - phaseStartedAt_ > PhaseTimeoutMilliseconds) Fail("host-never-saw-guest-field");
+            return false;
+        }
+
+        case Phase::HostWriteWorldFlag:
+        {
+            if (!multiplayer_->Contexts().world.questFields.WriteFieldForTest(
+                    WorldFlagQuest, WorldFlag, WorldFlagValue))
+            {
+                if (now - phaseStartedAt_ > PhaseTimeoutMilliseconds) Fail("host-world-flag-unmapped");
+                return false;
+            }
+            std::snprintf(detail, sizeof(detail), "quest=%s field=%s value=%u", WorldFlagQuest, WorldFlag, WorldFlagValue);
+            diagnostics_.Event("WorldFlagHostWrote", detail);
+            Enter(Phase::Done, now);
+            return true;
+        }
+
+        case Phase::GuestAwaitWorldFlag:
+        {
+            std::uint32_t value = 0;
+            if (multiplayer_->Contexts().world.questFields.ReadFieldForTest(WorldFlagQuest, WorldFlag, value) &&
+                value == WorldFlagValue)
+            {
+                std::snprintf(detail, sizeof(detail), "quest=%s field=%s value=%u", WorldFlagQuest, WorldFlag, value);
+                diagnostics_.Event("WorldFlagGuestObserved", detail);
+                Enter(Phase::Done, now);
+                return true;
+            }
+            if (now - phaseStartedAt_ > PhaseTimeoutMilliseconds) Fail("guest-never-saw-host-world-flag");
             return false;
         }
 

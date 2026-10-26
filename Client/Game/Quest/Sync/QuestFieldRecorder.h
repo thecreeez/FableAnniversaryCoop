@@ -56,6 +56,9 @@ namespace fable::multiplayer::persistence
         {
             char name[96] = {};
             void* script = nullptr;
+            // Master-quest data object (global world flags such as
+            // BridgeOpened), when this quest owns one.
+            void* masterData = nullptr;
         };
 
         struct ObservedField final
@@ -76,6 +79,11 @@ namespace fable::multiplayer::persistence
         // SEH-only helpers; they must not own C++ objects.
         std::size_t CollectRunningQuests(RunningQuest* quests, std::size_t capacity) const noexcept;
         bool IsQuestScriptObject(const void* candidate) const noexcept;
+        // RTTI class-name suffix test shared by the two object kinds.
+        bool HasTypeSuffix(const void* candidate, const char* suffix, bool topLevel) const noexcept;
+        void* FindMasterData(std::uintptr_t quest, const void* script) const noexcept;
+        bool SaveMasterData(void* masterData) const noexcept;
+        bool MasterDataQuestName(const void* masterData, char* destination, std::size_t capacity) const noexcept;
         bool SaveScript(void* script) const noexcept;
 
         static constexpr std::size_t MaximumRunningQuests = 256;

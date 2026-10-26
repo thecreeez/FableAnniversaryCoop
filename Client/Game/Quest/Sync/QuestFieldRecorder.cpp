@@ -22,6 +22,14 @@ namespace
     constexpr std::array<std::uint8_t, 9> TransferPrefix = {
         0x83, 0xEC, 0x08, 0x56, 0x57, 0x8B, 0x7C, 0x24, 0x14};
 
+    // CPersistContext save-mode constructor (this, CCharString* out): a plain
+    // struct with no destructor ([+0x18] mode 1, [+0x20] output).
+    constexpr std::uintptr_t PersistContextSaveConstructorRva = 0x01316E80;
+    constexpr std::size_t PersistContextBytes = 0x80;
+    // NScript::C<Quest>MasterData::Persist(CPersistContext&) is vtable slot 1.
+    constexpr std::size_t MasterDataPersistSlot = 1;
+    constexpr std::size_t MasterDataScanBytes = 0x400;
+
     // CQuestManager: +0x44 active-quest list head; node [0] next, [8] quest.
     // Quest object +0x34: name string rep ([+4] chars, [+8] length).
     constexpr std::size_t ActiveQuestListOffset = 0x44;
@@ -195,6 +203,7 @@ namespace fable::multiplayer::persistence
                     }
                 }
                 if (script == nullptr) continue;
+                quests[count].masterData = FindMasterData(quest, script);
                 std::memcpy(quests[count].name, rep->data, static_cast<std::size_t>(rep->len));
                 quests[count].name[rep->len] = '\0';
                 quests[count].script = script;
@@ -209,9 +218,16 @@ namespace fable::multiplayer::persistence
 
     bool QuestFieldRecorder::IsQuestScriptObject(const void* const candidate) const noexcept
     {
-        // The object's vtable must belong to the game image, and its RTTI type
-        // must be a top-level quest script: ".?AV<Class>@NScript@@" with no
-        // enclosing class (nested names are entity scripts).
+        // Top-level quest script: ".?AVC<Class>@NScript@@" with no enclosing
+        // class (nested names are entity scripts).
+        return HasTypeSuffix(candidate, "@NScript@@", true);
+    }
+
+    bool QuestFieldRecorder::HasTypeSuffix(
+        const void* const candidate, const char* const suffix, const bool topLevel) const noexcept
+    {
+        // The object's vtable must belong to the game image and its RTTI
+        // type name must start ".?AVC" and end with `suffix`.
         const auto base = reinterpret_cast<std::uintptr_t>(gameModule_);
         __try
         {
@@ -228,19 +244,21 @@ namespace fable::multiplayer::persistence
             if (typeDescriptor < base || typeDescriptor >= end) return false;
             const char* const name = reinterpret_cast<const char*>(typeDescriptor + 8);
             static constexpr char Prefix[] = ".?AVC";
-            static constexpr char Suffix[] = "@NScript@@";
             constexpr std::size_t prefixLength = sizeof(Prefix) - 1;
-            constexpr std::size_t suffixLength = sizeof(Suffix) - 1;
+            const std::size_t suffixLength = std::strlen(suffix);
             if (std::strncmp(name, Prefix, prefixLength) != 0) return false;
             const std::size_t length = strnlen(name, 160);
             if (length <= prefixLength + suffixLength ||
-                std::strcmp(name + length - suffixLength, Suffix) != 0)
+                std::strcmp(name + length - suffixLength, suffix) != 0)
             {
                 return false;
             }
-            for (std::size_t index = prefixLength; index < length - suffixLength; ++index)
+            if (topLevel)
             {
-                if (name[index] == '@') return false;
+                for (std::size_t index = prefixLength; index < length - suffixLength; ++index)
+                {
+                    if (name[index] == '@') return false;
+                }
             }
             return true;
         }
@@ -248,6 +266,96 @@ namespace fable::multiplayer::persistence
         {
             return false;
         }
+    }
+
+    bool QuestFieldRecorder::MasterDataQuestName(
+        const void* const masterData, char* const destination, const std::size_t capacity) const noexcept
+    {
+        // ".?AVCQ_SunnyvaleMasterData@NScript@@" -> "Q_SunnyvaleMaster".
+        destination[0] = '\0';
+        __try
+        {
+            const auto vtable = *reinterpret_cast<const std::uintptr_t*>(masterData);
+            const auto locator = *reinterpret_cast<const std::uintptr_t*>(vtable - sizeof(void*));
+            const auto typeDescriptor = *reinterpret_cast<const std::uintptr_t*>(locator + 12);
+            const char* const name = reinterpret_cast<const char*>(typeDescriptor + 8);
+            static constexpr char Prefix[] = ".?AVC";
+            static constexpr char Suffix[] = "Data@NScript@@";
+            const std::size_t length = strnlen(name, 160);
+            const std::size_t prefixLength = sizeof(Prefix) - 1;
+            const std::size_t suffixLength = sizeof(Suffix) - 1;
+            if (length <= prefixLength + suffixLength) return false;
+            const std::size_t nameLength = length - prefixLength - suffixLength;
+            if (nameLength >= capacity) return false;
+            std::memcpy(destination, name + prefixLength, nameLength);
+            destination[nameLength] = '\0';
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            destination[0] = '\0';
+            return false;
+        }
+    }
+
+    void* QuestFieldRecorder::FindMasterData(const std::uintptr_t quest, const void* const script) const noexcept
+    {
+        // The master data object hangs off the quest or its script.
+        const std::uintptr_t owners[] = {quest, reinterpret_cast<std::uintptr_t>(script)};
+        __try
+        {
+            for (const std::uintptr_t owner : owners)
+            {
+                for (std::size_t offset = 0; offset < MasterDataScanBytes; offset += sizeof(void*))
+                {
+                    void* const candidate = *reinterpret_cast<void* const*>(owner + offset);
+                    if (HasTypeSuffix(candidate, "MasterData@NScript@@", true)) return candidate;
+                }
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+        }
+        return nullptr;
+    }
+
+    bool QuestFieldRecorder::SaveMasterData(void* const masterData) const noexcept
+    {
+        using PersistContextConstructor = void(__thiscall*)(void*, game::native::CharString*);
+        using MasterDataPersist = void(__thiscall*)(void*, void*);
+        const auto base = reinterpret_cast<std::uintptr_t>(gameModule_);
+        const auto construct = reinterpret_cast<CharStringConstructor>(base + game::native::rva::CharStringConstructor);
+        const auto destroy = reinterpret_cast<CharStringDestructor>(base + game::native::rva::CharStringDestructor);
+        const auto makeContext = reinterpret_cast<PersistContextConstructor>(base + PersistContextSaveConstructorRva);
+        alignas(8) std::uint8_t context[PersistContextBytes] = {};
+        game::native::CharString scratch = {};
+        bool constructed = false;
+        bool saved = false;
+        AcquireSRWLockExclusive(&observedLock_);
+        observedCount_ = 0;
+        ReleaseSRWLockExclusive(&observedLock_);
+        recordingScript_.store(masterData, std::memory_order_release);
+        __try
+        {
+            construct(&scratch, "", -1);
+            constructed = true;
+            makeContext(context, &scratch);
+            const auto persist = reinterpret_cast<MasterDataPersist>(
+                (*reinterpret_cast<void* const* const*>(masterData))[MasterDataPersistSlot]);
+            persist(masterData, context);
+            saved = true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            saved = false;
+        }
+        recordingScript_.store(nullptr, std::memory_order_release);
+        if (constructed)
+        {
+            __try { destroy(&scratch); }
+            __except (EXCEPTION_EXECUTE_HANDLER) {}
+        }
+        return saved;
     }
 
     bool QuestFieldRecorder::SaveScript(void* const script) const noexcept
@@ -292,6 +400,8 @@ namespace fable::multiplayer::persistence
         std::array<RunningQuest, MaximumRunningQuests> quests = {};
         const std::size_t questCount = CollectRunningQuests(quests.data(), quests.size());
         std::size_t scripted = 0;
+        std::size_t masterObjects = 0;
+        std::size_t masterFields = 0;
         for (std::size_t index = 0; index < questCount; ++index)
         {
             if (!SaveScript(quests[index].script)) continue;
@@ -301,15 +411,34 @@ namespace fable::multiplayer::persistence
                 fields.push_back({quests[index].name, observed_[at].name,
                     observed_[at].kind, observed_[at].address});
             }
+            // Every quest refers to the same master data object; record each
+            // object once, under the quest its class is named after.
+            void* const masterData = quests[index].masterData;
+            bool seen = masterData == nullptr;
+            for (std::size_t other = 0; other < index && !seen; ++other)
+            {
+                seen = quests[other].masterData == masterData;
+            }
+            char masterQuest[96] = {};
+            if (!seen && MasterDataQuestName(masterData, masterQuest, sizeof(masterQuest)) &&
+                SaveMasterData(masterData))
+            {
+                ++masterObjects;
+                for (std::size_t at = 0; at < observedCount_; ++at)
+                {
+                    fields.push_back({masterQuest, observed_[at].name,
+                        observed_[at].kind, observed_[at].address});
+                    ++masterFields;
+                }
+            }
         }
         if (!reported_)
         {
             reported_ = true;
             char detail[160] = {};
             std::snprintf(detail, sizeof(detail),
-                "running_quests=%zu scripts_saved=%zu fields=%zu window_transfers=%u first_delta=%ld scratch_bytes=%zu",
-                questCount, scripted, fields.size(), windowTransfers_.load(),
-                firstDelta_.load(), scratchBytes_);
+                "running_quests=%zu scripts_saved=%zu fields=%zu master_objects=%zu master_fields=%zu",
+                questCount, scripted, fields.size(), masterObjects, masterFields);
             diagnostics_.Event("MultiplayerQuestFieldRecorderStats", detail);
         }
         return true;

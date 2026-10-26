@@ -4,6 +4,7 @@
 // the ownership groups here makes lifecycle dependencies visible without
 // forcing every new replicated feature into MultiplayerSession itself.
 
+#include "Game/Cutscene/CutsceneObserver.h"
 #include "Multiplayer/Authority/AuthorityReplication.h"
 #include "Multiplayer/Authority/EntitySimulationAuthority.h"
 #include "Multiplayer/Combat/PlayerCombatantDirectory.h"
@@ -35,6 +36,7 @@
 #include "Multiplayer/Replication/VillageMembershipReplication.h"
 #include "Multiplayer/Transport/ReliableMessageDispatcher.h"
 #include "Multiplayer/Transport/UdpPeer.h"
+#include "Multiplayer/World/CutsceneSyncService.h"
 #include "Multiplayer/World/MapTransitionAuthorityService.h"
 
 namespace fable::multiplayer
@@ -64,6 +66,8 @@ namespace fable::multiplayer
         persistence::QuestStateAuthorityService questState;
         persistence::QuestEventReplicationService questEvents;
         persistence::QuestFieldSyncService questFields;
+        game::cutscene::CutsceneObserver cutscenes;
+        world::CutsceneSyncService cutsceneSync;
         persistence::WorldSectionAuthorityService worldSections;
         persistence::SavedEntityMapBaselineService savedEntityMapBaseline;
         persistence::SavedEntityConstructionGate savedEntityConstructionGate;

@@ -46,6 +46,8 @@ namespace fable::multiplayer::protocol
         QuestEvent = 18,
         // Changed quest-script progress fields (named CPersistContext values).
         QuestField = 19,
+        // Shared cutscene start, sent once every player has gathered.
+        Cutscene = 20,
         Count,
     };
 

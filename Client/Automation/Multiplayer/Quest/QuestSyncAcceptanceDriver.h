@@ -44,6 +44,8 @@ namespace fable::automation::multiplayer::quest
             HostWriteField,
             GuestAwaitField,
             HostAwaitField,
+            HostWriteWorldFlag,
+            GuestAwaitWorldFlag,
             Done,
             Failed,
         };
