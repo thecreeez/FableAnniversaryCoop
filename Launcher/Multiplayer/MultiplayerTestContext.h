@@ -21,7 +21,8 @@ enum class MultiplayerScenario
     HeroWill,
     ManualRoster,
     MapStress,
-    Save
+    Save,
+    Quest
 };
 
 struct MultiplayerTestContext final

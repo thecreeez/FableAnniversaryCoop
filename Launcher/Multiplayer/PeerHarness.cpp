@@ -271,6 +271,8 @@ const wchar_t *ScenarioName(const MultiplayerTestContext &context, bool host)
         return host ? L"multiplayer_host_map_stress" : L"multiplayer_guest_map_stress";
     case MultiplayerScenario::Save:
         return host ? L"multiplayer_host_save" : L"multiplayer_guest_save";
+    case MultiplayerScenario::Quest:
+        return host ? L"multiplayer_host_quest" : L"multiplayer_guest_quest";
     default:
         return prefix;
     }

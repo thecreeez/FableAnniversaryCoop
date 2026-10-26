@@ -41,6 +41,11 @@ namespace fable::multiplayer::protocol
         // chunked over the reliable control stream and never include the
         // guest-owned PLAYER/Hero section.
         WorldSectionSnapshot = 17,
+        // Live host-authoritative CQuestManager lifecycle transitions
+        // (activate, deactivate, complete, fail) between connected peers.
+        QuestEvent = 18,
+        // Changed quest-script progress fields (named CPersistContext values).
+        QuestField = 19,
         Count,
     };
 

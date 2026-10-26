@@ -41,6 +41,14 @@ namespace fable::multiplayer
         {
             diagnostics.Event("ClientFailed", "multiplayer-quest-state-publication");
         }
+        if (!world.questEvents.Process())
+        {
+            diagnostics.Event("ClientFailed", "multiplayer-quest-event-replication");
+        }
+        if (!world.questFields.Process())
+        {
+            diagnostics.Event("ClientFailed", "multiplayer-quest-field-sync");
+        }
         if (!world.worldSections.Process())
         {
             diagnostics.Event(

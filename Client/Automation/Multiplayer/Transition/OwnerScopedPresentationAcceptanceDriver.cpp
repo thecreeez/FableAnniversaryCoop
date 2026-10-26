@@ -12,6 +12,21 @@
 
 #include <cstdio>
 
+namespace
+{
+    constexpr std::uint64_t ExpectedStateSettleMilliseconds = 3'000;
+    // The route can finish on the same tick the peers reunite; the remote
+    // presentation then still needs a moment to be rebuilt on the new map.
+    constexpr std::uint64_t PostRouteOverlapGraceMilliseconds = 15'000;
+    // The retail sheathe/unsheathe request is accepted but often not taken
+    // in town regions, so the owner mutation sets the drawn layout directly
+    // through the same presentation path the mod uses to rebuild a Hero.
+    // Observed retail carry slots: 923 = ranged in hand.
+    constexpr std::uint32_t RangedHandCarrySlot = 923;
+    constexpr std::uint64_t WeaponDrawRetryMilliseconds = 5'000;
+    constexpr unsigned int MaximumWeaponDrawAttempts = 3;
+}
+
 namespace fable::automation::multiplayer::transition
 {
     namespace
@@ -123,12 +138,17 @@ namespace fable::automation::multiplayer::transition
             {
                 return;
             }
+            // The mutation counts only once the requested weapon is really
+            // active on the owner; any other equipment change (for example a
+            // stowed, detached weapon) is not the state the guest must show.
             ownerMutationObserved_ =
                 !ownerClothingAfter_.Equals(ownerClothingBefore_) &&
+                ownerEquipmentAfter_.activeFamily == requestedFamily_ &&
                 !SameDurableEquipmentState(
                     ownerEquipmentAfter_, ownerEquipmentBefore_);
             if (!ownerMutationObserved_)
             {
+                RetryWeaponDraw();
                 return;
             }
             mutationObservedAt_ = GetTickCount64();
@@ -137,9 +157,16 @@ namespace fable::automation::multiplayer::transition
                 "owner-local=changed state=clothing-and-equipment");
         }
 
+        const bool routeComplete = mapStress_->IsComplete();
+        if (routeComplete && routeCompletedAt_ == 0)
+        {
+            routeCompletedAt_ = GetTickCount64();
+        }
+        const bool graceExpired = routeComplete &&
+            GetTickCount64() - routeCompletedAt_ > PostRouteOverlapGraceMilliseconds;
         if (!mapStress_->IsStableSameMap())
         {
-            if (mapStress_->IsComplete())
+            if (graceExpired)
             {
                 Fail("map-stress-completed-without-stable-overlap-checkpoint");
             }
@@ -156,7 +183,7 @@ namespace fable::automation::multiplayer::transition
         }
         if (!ValidateCheckpoint())
         {
-            if (mapStress_->IsComplete())
+            if (graceExpired)
             {
                 Fail("map-stress-completed-before-owner-overlap-observed");
             }
@@ -187,6 +214,50 @@ namespace fable::automation::multiplayer::transition
             "MultiplayerOwnerScopedPresentationBaselineCaptured",
             "local-hero-clothing-and-equipment-baseline-ready");
         return true;
+    }
+
+    bool OwnerScopedPresentationAcceptanceDriver::ApplyActiveFamily(
+        void* const nativeHero,
+        const CreatureWeaponFamily family) noexcept
+    {
+        game::hero_pawn::equipment::HeroEquipmentState desired = ownerEquipmentBefore_;
+        desired.activeFamily = family;
+        if (family == CreatureWeaponFamily::Ranged)
+        {
+            desired.rangedAttachmentSlot = RangedHandCarrySlot;
+        }
+        return game::hero_pawn::equipment::native::HeroWeaponComponent::
+            ApplyPresentation(*entities_, nativeHero, desired);
+    }
+
+    void OwnerScopedPresentationAcceptanceDriver::RetryWeaponDraw() noexcept
+    {
+        const std::uint64_t now = GetTickCount64();
+        if (now - weaponDrawRequestedAt_ < WeaponDrawRetryMilliseconds)
+        {
+            return;
+        }
+        if (weaponDrawAttempts_ >= MaximumWeaponDrawAttempts)
+        {
+            Fail("owner-weapon-draw-not-taken-by-game");
+            return;
+        }
+        game::Entity* const hero = entities_->GetHero();
+        if (hero == nullptr || !hero->IsValid())
+        {
+            if (hero != nullptr) hero->Release();
+            return;
+        }
+        void* const nativeHero = entities_->ResolveNative(hero->NativeHandle());
+        const bool requested = nativeHero != nullptr &&
+            ApplyActiveFamily(nativeHero, requestedFamily_);
+        hero->Release();
+        ++weaponDrawAttempts_;
+        weaponDrawRequestedAt_ = now;
+        char detail[96] = {};
+        std::snprintf(detail, sizeof(detail), "attempt=%u accepted=%s",
+            weaponDrawAttempts_, requested ? "true" : "false");
+        Report("MultiplayerOwnerScopedWeaponDrawRetried", detail);
     }
 
     bool OwnerScopedPresentationAcceptanceDriver::ApplyOwnerMutation() noexcept
@@ -240,11 +311,12 @@ namespace fable::automation::multiplayer::transition
                 requested = CreatureWeaponFamily::None;
             }
             if (requested != ownerEquipmentBefore_.activeFamily &&
-                game::hero_pawn::equipment::native::HeroWeaponComponent::
-                    RequestActiveFamily(
-                        entities_->Interface(), hero->NativeHandle(), requested))
+                ApplyActiveFamily(nativeHero, requested))
             {
                 ownerEquipmentAfter_.activeFamily = requested;
+                requestedFamily_ = requested;
+                weaponDrawAttempts_ = 1;
+                weaponDrawRequestedAt_ = GetTickCount64();
                 equipmentChanged = true;
             }
         }
@@ -376,8 +448,14 @@ namespace fable::automation::multiplayer::transition
                 remoteClothingChanged = true;
                 remoteEquipmentChanged = true;
                 verifiedRemoteActorId = snapshot.state.actorId;
-                if (!baseline->expectedCaptured)
+                // The owner's mutation lands in several property updates
+                // (melee, then ranged and active slot), so the expected state
+                // keeps following updates until it has settled.
+                const std::uint64_t observedAt = GetTickCount64();
+                if (!baseline->expectedCaptured ||
+                    observedAt - baseline->expectedCapturedAt < ExpectedStateSettleMilliseconds)
                 {
+                    if (!baseline->expectedCaptured) baseline->expectedCapturedAt = observedAt;
                     baseline->expectedClothing = snapshot.state.heroClothing;
                     baseline->expectedEquipment = snapshot.state.heroEquipment;
                     baseline->expectedCaptured = true;
@@ -478,6 +556,10 @@ namespace fable::automation::multiplayer::transition
         ownerEquipmentAfter_ = {};
         nextMutationAttemptAt_ = 0;
         mutationObservedAt_ = 0;
+        routeCompletedAt_ = 0;
+        requestedFamily_ = game::creature::equipment::CreatureWeaponFamily::None;
+        weaponDrawAttempts_ = 0;
+        weaponDrawRequestedAt_ = 0;
         stableCheckpointCount_ = 0;
         lastValidatedTransitionOrdinal_ =
             static_cast<unsigned int>(-1);

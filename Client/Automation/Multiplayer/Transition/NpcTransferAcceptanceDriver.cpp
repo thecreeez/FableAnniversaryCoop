@@ -19,6 +19,10 @@ namespace
     constexpr float SpawnOffset = 2.0f;
     constexpr std::uint64_t SpawnDelayMilliseconds = 500;
     constexpr std::uint64_t SourceRosterSettleMilliseconds = 1'000;
+    // A fresh spawn reaches the host lifecycle directory asynchronously; under
+    // load that can take several seconds. Wait for it rather than failing the
+    // one-shot transfer submit.
+    constexpr std::uint64_t SourceRecordDeadlineMilliseconds = 15'000;
 }
 
 namespace fable::automation::multiplayer::transition
@@ -139,6 +143,15 @@ namespace fable::automation::multiplayer::transition
         {
             return;
         }
+        const auto* const record =
+            multiplayer_->Contexts().entities.entityLifecycle.Directory().Find(targetUid_);
+        const bool recordReady = record != nullptr && record->live &&
+            record->available && record->generation != 0 &&
+            record->mapId != 0 && record->mapEpoch != 0;
+        if (!recordReady && now - spawnedAt_ < SourceRecordDeadlineMilliseconds)
+        {
+            return;
+        }
         completed_ = true;
         if (!BeginSourceTeardown())
         {
@@ -171,9 +184,27 @@ namespace fable::automation::multiplayer::transition
                 destinationPosition_,
                 destinationFacing_))
         {
-            diagnostics_.Event(
-                "MultiplayerNpcTransferSourceTeardownFailed",
-                "stage=canonical-transfer-submit");
+            auto& lifecycle = multiplayer_->Contexts().entities.entityLifecycle;
+            const auto* const record = lifecycle.Directory().Find(targetUid_);
+            char detail[384] = {};
+            if (record == nullptr)
+            {
+                std::snprintf(detail, sizeof(detail),
+                    "stage=canonical-transfer-submit uid=%016llX record=missing directory_size=%zu canonical=%016llX canonical_record=%d",
+                    static_cast<unsigned long long>(targetUid_), lifecycle.Directory().Size(),
+                    static_cast<unsigned long long>(multiplayer_->Contexts().entities.entityIdentities.Canonicalize(targetUid_)),
+                    lifecycle.Directory().Find(multiplayer_->Contexts().entities.entityIdentities.Canonicalize(targetUid_)) != nullptr ? 1 : 0);
+            }
+            else
+            {
+                std::snprintf(detail, sizeof(detail),
+                    "stage=canonical-transfer-submit uid=%016llX record=present live=%d available=%d generation=%llu map_id=%u map=%s epoch=%u destination_map_id=%u",
+                    static_cast<unsigned long long>(targetUid_), record->live ? 1 : 0,
+                    record->available ? 1 : 0, static_cast<unsigned long long>(record->generation),
+                    static_cast<unsigned int>(record->mapId), record->mapName.c_str(),
+                    static_cast<unsigned int>(record->mapEpoch), static_cast<unsigned int>(destinationMapId_));
+            }
+            diagnostics_.Event("MultiplayerNpcTransferSourceTeardownFailed", detail);
             return false;
         }
         if (scriptRetained_)

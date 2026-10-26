@@ -34,6 +34,7 @@ int RunMultiplayerTest(const MultiplayerTestContext& context)
     case MultiplayerScenario::Transition: return RunTransitionScenario(session);
     case MultiplayerScenario::MapStress: return RunMapStressScenario(session);
     case MultiplayerScenario::Save: return RunSaveScenario(session);
+    case MultiplayerScenario::Quest: return RunQuestScenario(session);
     case MultiplayerScenario::Authority: return RunAuthorityScenario(session);
     case MultiplayerScenario::Combat: return RunCombatScenario(session);
     case MultiplayerScenario::HeroWill: return RunHeroWillScenario(session);

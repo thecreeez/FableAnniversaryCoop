@@ -174,6 +174,10 @@ int wmain(int argc, wchar_t** argv)
         {
             scenario = MultiplayerScenario::Save;
         }
+        else if (options.multiplayerQuestTest)
+        {
+            scenario = MultiplayerScenario::Quest;
+        }
         else if (options.multiplayerRosterTest)
         {
             scenario = MultiplayerScenario::Roster;

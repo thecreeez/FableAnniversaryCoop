@@ -66,6 +66,15 @@ namespace fable::game::native
         // manager instance and CStringParser lifecycle remain deliberately
         // opaque until a runtime-safe construction boundary is validated.
         inline constexpr std::uintptr_t QuestManagerGlobal = 0x03230360;
+        // CQuestManager lifecycle methods reached by the script-interface
+        // thunks at slots 291/293 (activate), 295 (deactivate), 303
+        // (complete) and 304 (fail). Predicates back slots 299 and 301.
+        inline constexpr std::uintptr_t QuestManagerActivate = 0x01BC2580;
+        inline constexpr std::uintptr_t QuestManagerDeactivate = 0x01BC2630;
+        inline constexpr std::uintptr_t QuestManagerComplete = 0x01BBE4A0;
+        inline constexpr std::uintptr_t QuestManagerFail = 0x01BBEBD0;
+        inline constexpr std::uintptr_t QuestManagerIsActive = 0x01BB92D0;
+        inline constexpr std::uintptr_t QuestManagerIsCompleted = 0x01BBAF30;
         inline constexpr std::uintptr_t QuestManagerSaveGameState =
             0x01BC4270;
         inline constexpr std::uintptr_t QuestManagerLoadGameState =

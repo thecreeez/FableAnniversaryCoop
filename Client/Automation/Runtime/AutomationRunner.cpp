@@ -5,6 +5,7 @@
 #include "Automation/Multiplayer/Combat/CombatTargetAcceptanceDriver.h"
 #include "Automation/Multiplayer/Combat/CombatVisualExchangeDriver.h"
 #include "Automation/Multiplayer/Persistence/SaveAcceptanceDriver.h"
+#include "Automation/Multiplayer/Quest/QuestSyncAcceptanceDriver.h"
 #include "Automation/Multiplayer/Transition/NpcTransferAcceptanceDriver.h"
 #include "Automation/Multiplayer/Transition/MapStressAcceptanceDriver.h"
 #include "Automation/Multiplayer/Transition/OwnerScopedPresentationAcceptanceDriver.h"
@@ -27,6 +28,7 @@ namespace fable::automation::runtime
         ::fable::automation::multiplayer::transition::MapStressAcceptanceDriver mapStress;
         ::fable::automation::multiplayer::transition::OwnerScopedPresentationAcceptanceDriver ownerPresentation;
         ::fable::automation::multiplayer::persistence::SaveAcceptanceDriver save;
+        ::fable::automation::multiplayer::quest::QuestSyncAcceptanceDriver questSync;
         ::fable::multiplayer::MultiplayerSession* multiplayer = nullptr;
         ::fable::core::Diagnostics diagnostics = {};
         bool heroWillFocused = false;
@@ -126,6 +128,9 @@ namespace fable::automation::runtime
                 configuration.ScenarioIs(L"multiplayer_host_transition"),
             configuration.MapStressSeed(),
             transition ? 1 : configuration.MapStressTransitions(),
+            // The transition acceptance moves one NPC from the host, which
+            // must therefore own the destination map.
+            transition,
             services.Entities(),
             multiplayer,
             diagnostics);
@@ -145,6 +150,15 @@ namespace fable::automation::runtime
             hostSave,
             services.Entities(),
             services.Players(),
+            multiplayer,
+            diagnostics);
+        const bool hostQuest =
+            configuration.ScenarioIs(L"multiplayer_host_quest");
+        const bool guestQuest =
+            configuration.ScenarioIs(L"multiplayer_guest_quest");
+        state_->questSync.Initialize(
+            hostQuest || guestQuest,
+            hostQuest,
             multiplayer,
             diagnostics);
         return true;
@@ -177,6 +191,7 @@ namespace fable::automation::runtime
         state_->mapStress.Tick();
         state_->ownerPresentation.Tick();
         state_->save.Tick(remotePresentationReady);
+        state_->questSync.Tick(remotePresentationReady);
         state_->transition.Tick(
             state_->transitionScenario
                 ? transitionReady
@@ -199,6 +214,7 @@ namespace fable::automation::runtime
         return state_ != nullptr &&
             (state_->transition.ProcessGameThreadIdle() ||
                 state_->save.ProcessGameThreadIdle() ||
+                state_->questSync.ProcessGameThreadIdle() ||
                 state_->mapStress.ProcessGameThreadIdle());
     }
 
@@ -210,6 +226,7 @@ namespace fable::automation::runtime
         }
         state_->npcTransfer.Shutdown();
         state_->save.Shutdown();
+        state_->questSync.Shutdown();
         state_->ownerPresentation.Shutdown();
         state_->mapStress.Shutdown();
         state_->heroWill.Shutdown();

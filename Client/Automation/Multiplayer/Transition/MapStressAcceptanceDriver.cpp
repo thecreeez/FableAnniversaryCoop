@@ -45,12 +45,14 @@ namespace fable::automation::multiplayer::transition
         const bool host,
         const std::uint32_t seed,
         const unsigned int transitionCount,
+        const bool guestFollowsHost,
         game::EntityService& entities,
         ::fable::multiplayer::MultiplayerRuntimeGraph& multiplayer,
         const core::Diagnostics& diagnostics) noexcept
     {
         Shutdown();
         enabled_ = enabled;
+        guestFollowsHost_ = guestFollowsHost;
         if (!enabled_)
         {
             return;
@@ -415,6 +417,13 @@ namespace fable::automation::multiplayer::transition
             return true;
         }
 
+        if (!host_ && guestFollowsHost_)
+        {
+            // Retry until the host has left; the split branch above then
+            // schedules the reunion into the map the host already owns.
+            return false;
+        }
+
         const auto exits = AvailableDestinations(local);
         if (exits.empty())
         {
@@ -681,7 +690,10 @@ namespace fable::automation::multiplayer::transition
         localDestinationMapId_ = 0;
         settledAt_ = 0;
         holdingForReunion_ = false;
-        if (transitionOrdinal_ >= transitionLimit_)
+        // Finish only once reunited. A peer that stops while split leaves the
+        // other holding for a reunion that never comes; past the budget the
+        // ordinary split path keeps scheduling the reunion transition.
+        if (transitionOrdinal_ >= transitionLimit_ && local.id == remote.id)
         {
             completed_ = true;
             diagnostics_.Event(

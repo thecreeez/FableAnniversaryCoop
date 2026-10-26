@@ -26,6 +26,7 @@ namespace fable::automation::multiplayer::transition
             bool host,
             std::uint32_t seed,
             unsigned int transitionCount,
+            bool guestFollowsHost,
             game::EntityService& entities,
             ::fable::multiplayer::MultiplayerRuntimeGraph& multiplayer,
             const core::Diagnostics& diagnostics) noexcept;
@@ -105,6 +106,10 @@ namespace fable::automation::multiplayer::transition
         unsigned int travelInvocations_ = 0;
         std::atomic_bool travelQueued_{false};
         bool host_ = false;
+        // When set, a guest sharing the host's map never picks its own exit;
+        // it waits for the host to leave and then joins it, so the host
+        // always reaches (and owns) the destination first.
+        bool guestFollowsHost_ = false;
         bool enabled_ = false;
         bool started_ = false;
         bool completed_ = false;

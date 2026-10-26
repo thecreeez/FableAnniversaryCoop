@@ -34,7 +34,7 @@ namespace
             p.WaitEvent(p.host(), "MultiplayerWorldTransitionCompleted") &&
             p.WaitEventDetail(p.host(), "MultiplayerMapAuthorityChanged", e.grant) &&
             p.WaitEventDetail(p.guest(), "MultiplayerMapAuthorityChanged", e.grant) &&
-            p.WaitEventDetail(p.guest(), "MultiplayerEntitySimulationCoverage", "local_simulation=22 fenced=0") &&
+            p.WaitEventDetail(p.guest(), "MultiplayerEntitySimulationCoverage", "replicable_npcs=22 local_simulation=23 fenced=0") &&
             p.WaitEventDetail(p.guest(), "MultiplayerEntityMovementPublishedMoving", e.owner) &&
             p.WaitEventDetail(p.host(), "MultiplayerEntityMovementAcceptedMoving", e.owner);
     }
@@ -79,7 +79,9 @@ int RunAuthorityScenario(MultiplayerTestSession& session)
     const bool handoff = WaitHandoff(session, e) &&
         p.WaitEvent(p.host(), "MultiplayerTransitionAcceptanceReturned") &&
         p.WaitEventCount(p.host(), "MultiplayerRemoteDefinitionCreated", 2) &&
-        p.WaitEventDetail(p.guest(), "MultiplayerRemoteAvatarResumed", "player=Host map=BowerstonePosh action=resumed");
+        // The client reports a re-entered remote Hero as a second Ready for that
+        // player; the former Resumed event no longer exists.
+        p.WaitEventDetailCount(p.guest(), "MultiplayerRemoteAvatarReady", "player=Host actor_id=", 2);
     if (handoff)
     {
         Sleep(2'000);
@@ -89,7 +91,7 @@ int RunAuthorityScenario(MultiplayerTestSession& session)
     const bool sticky = handoff && VerifyStickyLease(p.host(), p.guest(), e.grant) && VerifyLive(p.host(), p.guest());
     const bool guestStopped = sticky && runtime::CloseCreatedProcess(p.guest().game.process.get(), p.guest().game.processId, p.guest().game.shutdownEvent.get());
     const bool recovered = guestStopped && p.WaitEventDetail(p.host(), "MultiplayerMapAuthorityChanged", e.recovery) &&
-        p.WaitEventDetail(p.host(), "MultiplayerEntitySimulationCoverage", "local_simulation=22 fenced=0");
+        p.WaitEventDetail(p.host(), "MultiplayerEntitySimulationCoverage", "replicable_npcs=22 local_simulation=23 fenced=0");
     if (recovered)
     {
         Sleep(2'000);

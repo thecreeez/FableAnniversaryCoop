@@ -345,6 +345,13 @@
     <ClCompile Include="Multiplayer\Movement\EntityMovementReplication.cpp"><Filter>Multiplayer\Movement</Filter></ClCompile>
     <ClCompile Include="Multiplayer\Persistence\HostWorldStateProjection.cpp"><Filter>Multiplayer\Persistence</Filter></ClCompile>
     <ClCompile Include="Multiplayer\Persistence\QuestStateAuthorityService.cpp"><Filter>Multiplayer\Persistence</Filter></ClCompile>
+    <ClCompile Include="Multiplayer\Persistence\QuestEventReplicationService.cpp"><Filter>Multiplayer\Persistence</Filter></ClCompile>
+    <ClCompile Include="Multiplayer\Persistence\QuestFieldSyncService.cpp"><Filter>Multiplayer\Persistence</Filter></ClCompile>
+    <ClCompile Include="Game\Quest\Sync\QuestFieldRecorder.cpp"><Filter>Game\Quest\Persistence</Filter></ClCompile>
+    <ClCompile Include="Multiplayer\Protocol\QuestFieldMessage.cpp"><Filter>Multiplayer\Protocol</Filter></ClCompile>
+    <ClCompile Include="Automation\Multiplayer\Quest\QuestSyncAcceptanceDriver.cpp"><Filter>Multiplayer\Persistence</Filter></ClCompile>
+    <ClCompile Include="Game\Quest\Sync\QuestLifecycleHook.cpp"><Filter>Game\Quest\Persistence</Filter></ClCompile>
+    <ClCompile Include="Multiplayer\Protocol\QuestEventMessage.cpp"><Filter>Multiplayer\Protocol</Filter></ClCompile>
     <ClCompile Include="Multiplayer\Persistence\WorldSectionAuthorityService.cpp"><Filter>Multiplayer\Persistence</Filter></ClCompile>
     <ClCompile Include="Multiplayer\Persistence\WorldSectionSnapshotTransfer.cpp"><Filter>Multiplayer\Persistence</Filter></ClCompile>
     <ClCompile Include="Game\Quest\Persistence\QuestStateNativeCaptureHook.cpp"><Filter>Game\Quest\Persistence</Filter></ClCompile>

@@ -125,8 +125,12 @@ namespace fable::multiplayer
             villages,
             diagnostics_);
         w.hostWorldState.Initialize(role, e.entityLifecycle, e.entityIdentities, diagnostics_);
+        // Before questState: the executable validator checks the quest
+        // save/load prologues, which questState patches on install.
+        w.questEvents.Initialize(role, actorId, t.transport, diagnostics_);
         w.questState.Initialize(
             role, actorId, t.transport, diagnostics_, sessionAuthorityEpoch);
+        w.questFields.Initialize(role, actorId, t.transport, w.questEvents, diagnostics_);
         if (!w.worldSections.Initialize(
                 role, actorId, t.transport, diagnostics_,
                 sessionAuthorityEpoch))
@@ -281,6 +285,8 @@ namespace fable::multiplayer
             w.savedEntityMapBaseline.Shutdown();
             w.hostWorldState.Shutdown();
             w.worldSections.Shutdown();
+            w.questFields.Shutdown();
+            w.questEvents.Shutdown();
             w.questState.Shutdown();
             e.entityLifecycle.Shutdown();
             e.entityIdentities.Clear();

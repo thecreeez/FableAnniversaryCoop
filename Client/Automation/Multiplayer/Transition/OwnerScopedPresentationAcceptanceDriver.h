@@ -48,9 +48,14 @@ namespace fable::automation::multiplayer::transition
             game::hero_pawn::equipment::HeroEquipmentState expectedEquipment;
             bool captured = false;
             bool expectedCaptured = false;
+            std::uint64_t expectedCapturedAt = 0;
         };
 
         [[nodiscard]] bool CaptureLocalBaseline() noexcept;
+        void RetryWeaponDraw() noexcept;
+        bool ApplyActiveFamily(
+            void* nativeHero,
+            game::creature::equipment::CreatureWeaponFamily family) noexcept;
         [[nodiscard]] bool ApplyOwnerMutation() noexcept;
         [[nodiscard]] bool ValidateCheckpoint() noexcept;
         [[nodiscard]] bool ReadLocalState(
@@ -76,6 +81,11 @@ namespace fable::automation::multiplayer::transition
         game::hero_pawn::equipment::HeroEquipmentState ownerEquipmentAfter_;
         std::uint64_t nextMutationAttemptAt_ = 0;
         std::uint64_t mutationObservedAt_ = 0;
+        std::uint64_t routeCompletedAt_ = 0;
+        game::creature::equipment::CreatureWeaponFamily requestedFamily_ =
+            game::creature::equipment::CreatureWeaponFamily::None;
+        unsigned int weaponDrawAttempts_ = 0;
+        std::uint64_t weaponDrawRequestedAt_ = 0;
         unsigned int lastValidatedTransitionOrdinal_ =
             static_cast<unsigned int>(-1);
         unsigned int stableCheckpointCount_ = 0;

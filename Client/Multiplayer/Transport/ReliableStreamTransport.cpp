@@ -167,7 +167,9 @@ namespace fable::multiplayer
                 type == PacketType::PopulationState ||
                 type == PacketType::SavedEntityMapBaseline ||
                 type == PacketType::QuestStateSnapshot ||
-                type == PacketType::WorldSectionSnapshot;
+                type == PacketType::WorldSectionSnapshot ||
+                type == PacketType::QuestEvent ||
+                type == PacketType::QuestField;
         }
         if (streamId.kind == ReliableStreamKind::World)
         {

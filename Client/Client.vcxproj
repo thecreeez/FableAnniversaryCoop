@@ -218,6 +218,13 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClCompile Include="Multiplayer\Movement\EntityMovementReplication.cpp" />
     <ClCompile Include="Multiplayer\Persistence\HostWorldStateProjection.cpp" />
     <ClCompile Include="Multiplayer\Persistence\QuestStateAuthorityService.cpp" />
+    <ClCompile Include="Multiplayer\Persistence\QuestEventReplicationService.cpp" />
+    <ClCompile Include="Multiplayer\Persistence\QuestFieldSyncService.cpp" />
+    <ClCompile Include="Game\Quest\Sync\QuestFieldRecorder.cpp" />
+    <ClCompile Include="Multiplayer\Protocol\QuestFieldMessage.cpp" />
+    <ClCompile Include="Automation\Multiplayer\Quest\QuestSyncAcceptanceDriver.cpp" />
+    <ClCompile Include="Game\Quest\Sync\QuestLifecycleHook.cpp" />
+    <ClCompile Include="Multiplayer\Protocol\QuestEventMessage.cpp" />
     <ClCompile Include="Multiplayer\Persistence\WorldSectionAuthorityService.cpp" />
     <ClCompile Include="Multiplayer\Persistence\WorldSectionSnapshotTransfer.cpp" />
     <ClCompile Include="Game\Quest\Persistence\QuestStateNativeCaptureHook.cpp" />
@@ -522,6 +529,13 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClInclude Include="Multiplayer\Movement\EntityMovementReplication.h" />
     <ClInclude Include="Multiplayer\Persistence\HostWorldStateProjection.h" />
     <ClInclude Include="Multiplayer\Persistence\QuestStateAuthorityService.h" />
+    <ClInclude Include="Multiplayer\Persistence\QuestEventReplicationService.h" />
+    <ClInclude Include="Multiplayer\Persistence\QuestFieldSyncService.h" />
+    <ClInclude Include="Game\Quest\Sync\QuestFieldRecorder.h" />
+    <ClInclude Include="Multiplayer\Protocol\QuestFieldMessage.h" />
+    <ClInclude Include="Automation\Multiplayer\Quest\QuestSyncAcceptanceDriver.h" />
+    <ClInclude Include="Game\Quest\Sync\QuestLifecycleHook.h" />
+    <ClInclude Include="Multiplayer\Protocol\QuestEventMessage.h" />
     <ClInclude Include="Multiplayer\Persistence\WorldSectionAuthorityService.h" />
     <ClInclude Include="Multiplayer\Persistence\WorldSectionSnapshotTransfer.h" />
     <ClInclude Include="Game\Quest\Persistence\QuestStateNativeCaptureHook.h" />

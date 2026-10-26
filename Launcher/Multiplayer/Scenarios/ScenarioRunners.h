@@ -10,6 +10,7 @@ int RunManualScenario(MultiplayerTestSession& session);
 int RunTransitionScenario(MultiplayerTestSession& session);
 int RunMapStressScenario(MultiplayerTestSession& session);
 int RunSaveScenario(MultiplayerTestSession& session);
+int RunQuestScenario(MultiplayerTestSession& session);
 int RunAuthorityScenario(MultiplayerTestSession& session);
 int RunCombatScenario(MultiplayerTestSession& session);
 int RunHeroWillScenario(MultiplayerTestSession& session);

@@ -45,6 +45,31 @@ FABLE_RELIABLE_SINK_DESCRIPTOR(
     "multiplayer-quest-state-snapshot-dispatch",
     ResolveQuestStateSink);
 
+namespace
+{
+    // Research aid for mapping per-quest SCRIPT_DATA: when the variable names
+    // a directory, every host capture is written there verbatim.
+    void DumpSnapshotForResearch(
+        const std::uint8_t* const bytes,
+        const std::size_t byteCount,
+        const std::uint64_t revision) noexcept
+    {
+        char directory[MAX_PATH] = {};
+        const DWORD length = GetEnvironmentVariableA(
+            "ALBIONTOGETHER_DUMP_QUEST_SNAPSHOTS", directory, sizeof(directory));
+        if (length == 0 || length >= sizeof(directory) || bytes == nullptr) return;
+        char path[MAX_PATH + 64] = {};
+        std::snprintf(path, sizeof(path), "%s\\quest-snapshot-%04llu.txt",
+            directory, static_cast<unsigned long long>(revision));
+        const HANDLE file = CreateFileA(path, GENERIC_WRITE, 0, nullptr,
+            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return;
+        DWORD written = 0;
+        WriteFile(file, bytes, static_cast<DWORD>(byteCount), &written, nullptr);
+        CloseHandle(file);
+    }
+}
+
 namespace fable::multiplayer::persistence
 {
     void QuestStateAuthorityService::Initialize(
@@ -137,6 +162,7 @@ namespace fable::multiplayer::persistence
         }
         ++nextSnapshotRevision_;
         if (nextSnapshotRevision_ == 0) ++nextSnapshotRevision_;
+        DumpSnapshotForResearch(bytes, byteCount, nextSnapshotRevision_);
         if (!PublishHostSnapshot(
                 hostAuthorityEpoch_,
                 hostSessionRevision_,
