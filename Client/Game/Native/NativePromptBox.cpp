@@ -174,6 +174,23 @@ namespace fable::game::native
         queuedAt_ = 0;
     }
 
+    bool NativePromptBox::DismissAsPlayerForTest() noexcept
+    {
+        void* const manager = Manager();
+        if (state_ != State::Showing || manager == nullptr) return false;
+        __try
+        {
+            if (!IsOurs(manager)) return false;
+            using CloseFn = void(__thiscall*)(void*, std::uint8_t);
+            reinterpret_cast<CloseFn>(base_ + CloseRva)(manager, 0);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
     NativePromptBox::State NativePromptBox::Poll() noexcept
     {
         if (state_ != State::Showing) return state_;

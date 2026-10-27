@@ -275,6 +275,8 @@ const wchar_t *ScenarioName(const MultiplayerTestContext &context, bool host)
         return host ? L"multiplayer_host_quest" : L"multiplayer_guest_quest";
     case MultiplayerScenario::Features:
         return host ? L"multiplayer_host_features" : L"multiplayer_guest_features";
+    case MultiplayerScenario::Cutscene:
+        return host ? L"multiplayer_host_cutscene" : L"multiplayer_guest_cutscene";
     default:
         return prefix;
     }

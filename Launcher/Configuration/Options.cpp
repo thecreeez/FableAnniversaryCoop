@@ -136,6 +136,10 @@ namespace
         {
             options.multiplayerFeatureTest = true;
         }
+        else if (argument == L"--multiplayer-cutscene-test")
+        {
+            options.multiplayerCutsceneTest = true;
+        }
         else if (argument == L"--multiplayer-authority-test")
         {
             options.multiplayerAuthorityTest = true;
@@ -407,6 +411,7 @@ namespace
             (options.multiplayerSaveTest ? 1 : 0) +
             (options.multiplayerQuestTest ? 1 : 0) +
             (options.multiplayerFeatureTest ? 1 : 0) +
+            (options.multiplayerCutsceneTest ? 1 : 0) +
             (options.multiplayerAuthorityTest ? 1 : 0) +
             (options.multiplayerCombatTest ? 1 : 0) +
             (options.multiplayerHeroWillTest ? 1 : 0) +
@@ -482,6 +487,7 @@ namespace
             options.multiplayerSaveTest ||
             options.multiplayerQuestTest ||
             options.multiplayerFeatureTest ||
+            options.multiplayerCutsceneTest ||
             options.multiplayerAuthorityTest ||
             options.multiplayerCombatTest ||
             options.multiplayerHeroWillTest ||
@@ -652,6 +658,7 @@ void PrintUsage()
         << L"  --multiplayer-save-test  Save both players into the host world, restart, and prove both saves reload together\n"
         << L"  --multiplayer-quest-test  Start a quest on the host, complete it on the guest, and prove both share the progress\n"
         << L"  --multiplayer-feature-test  Roll, block, experience and quest card on the host must replay on the guest\n"
+        << L"  --multiplayer-cutscene-test  Wasp fixture: hold, cancel and gathered play of a shared quest cutscene\n"
         << L"  --map-stress-seed <n>  Replay a map-stress route with a known seed\n"
         << L"  --map-stress-transitions <n>  Map requests per peer from 3 to 60 (default: 12)\n"
         << L"  --multiplayer-authority-test  Move only the host away and prove guest NPC ownership handoff\n"

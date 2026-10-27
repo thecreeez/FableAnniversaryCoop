@@ -7,6 +7,7 @@
 #include "Automation/Multiplayer/Persistence/SaveAcceptanceDriver.h"
 #include "Automation/Multiplayer/Quest/QuestSyncAcceptanceDriver.h"
 #include "Automation/Multiplayer/Features/FeatureAcceptanceDriver.h"
+#include "Automation/Multiplayer/Features/CutsceneAcceptanceDriver.h"
 #include "Automation/Multiplayer/Transition/NpcTransferAcceptanceDriver.h"
 #include "Automation/Multiplayer/Transition/MapStressAcceptanceDriver.h"
 #include "Automation/Multiplayer/Transition/OwnerScopedPresentationAcceptanceDriver.h"
@@ -31,6 +32,7 @@ namespace fable::automation::runtime
         ::fable::automation::multiplayer::persistence::SaveAcceptanceDriver save;
         ::fable::automation::multiplayer::quest::QuestSyncAcceptanceDriver questSync;
         ::fable::automation::multiplayer::features::FeatureAcceptanceDriver features;
+        ::fable::automation::multiplayer::features::CutsceneAcceptanceDriver cutscene;
         ::fable::multiplayer::MultiplayerSession* multiplayer = nullptr;
         ::fable::core::Diagnostics diagnostics = {};
         bool heroWillFocused = false;
@@ -172,6 +174,16 @@ namespace fable::automation::runtime
             hostFeatures,
             multiplayer,
             diagnostics);
+        const bool hostCutscene =
+            configuration.ScenarioIs(L"multiplayer_host_cutscene");
+        const bool guestCutscene =
+            configuration.ScenarioIs(L"multiplayer_guest_cutscene");
+        state_->cutscene.Initialize(
+            hostCutscene || guestCutscene,
+            hostCutscene,
+            services.Entities(),
+            multiplayer,
+            diagnostics);
         return true;
     }
 
@@ -204,6 +216,7 @@ namespace fable::automation::runtime
         state_->save.Tick(remotePresentationReady);
         state_->questSync.Tick(remotePresentationReady);
         state_->features.Tick(remotePresentationReady);
+        state_->cutscene.Tick(remotePresentationReady);
         state_->transition.Tick(
             state_->transitionScenario
                 ? transitionReady
@@ -228,6 +241,7 @@ namespace fable::automation::runtime
                 state_->save.ProcessGameThreadIdle() ||
                 state_->questSync.ProcessGameThreadIdle() ||
                 state_->features.ProcessGameThreadIdle() ||
+                state_->cutscene.ProcessGameThreadIdle() ||
                 state_->mapStress.ProcessGameThreadIdle());
     }
 
@@ -241,6 +255,7 @@ namespace fable::automation::runtime
         state_->save.Shutdown();
         state_->questSync.Shutdown();
         state_->features.Shutdown();
+        state_->cutscene.Shutdown();
         state_->ownerPresentation.Shutdown();
         state_->mapStress.Shutdown();
         state_->heroWill.Shutdown();

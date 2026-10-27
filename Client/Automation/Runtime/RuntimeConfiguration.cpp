@@ -296,6 +296,7 @@ namespace fable::automation::runtime
             ScenarioIs(L"multiplayer_host_save") ||
             ScenarioIs(L"multiplayer_host_quest") ||
             ScenarioIs(L"multiplayer_host_features") ||
+            ScenarioIs(L"multiplayer_host_cutscene") ||
             ScenarioIs(L"multiplayer_guest") ||
             ScenarioIs(L"multiplayer_guest_combat") ||
             ScenarioIs(L"multiplayer_guest_hero_will") ||
@@ -304,7 +305,8 @@ namespace fable::automation::runtime
             ScenarioIs(L"multiplayer_guest_map_stress") ||
             ScenarioIs(L"multiplayer_guest_save") ||
             ScenarioIs(L"multiplayer_guest_quest") ||
-            ScenarioIs(L"multiplayer_guest_features");
+            ScenarioIs(L"multiplayer_guest_features") ||
+            ScenarioIs(L"multiplayer_guest_cutscene");
     }
 
     bool RuntimeConfiguration::LoadsFixture() const noexcept
@@ -320,6 +322,7 @@ namespace fable::automation::runtime
             ScenarioIs(L"multiplayer_host_save") ||
             ScenarioIs(L"multiplayer_host_quest") ||
             ScenarioIs(L"multiplayer_host_features") ||
+            ScenarioIs(L"multiplayer_host_cutscene") ||
             ScenarioIs(L"multiplayer_guest") ||
             ScenarioIs(L"multiplayer_guest_combat") ||
             ScenarioIs(L"multiplayer_guest_hero_will") ||
@@ -328,6 +331,7 @@ namespace fable::automation::runtime
             ScenarioIs(L"multiplayer_guest_map_stress") ||
             ScenarioIs(L"multiplayer_guest_save") ||
             ScenarioIs(L"multiplayer_guest_quest") ||
-            ScenarioIs(L"multiplayer_guest_features");
+            ScenarioIs(L"multiplayer_guest_features") ||
+            ScenarioIs(L"multiplayer_guest_cutscene");
     }
 }

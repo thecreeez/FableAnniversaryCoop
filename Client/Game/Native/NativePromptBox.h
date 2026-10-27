@@ -28,6 +28,10 @@ namespace fable::game::native
         void Close() noexcept;
         // Moves Showing to Dismissed once the box went away without Close.
         State Poll() noexcept;
+        // Acceptance seam: close our box through the retail path a player's
+        // click uses, leaving our state alone so Poll reports Dismissed.
+        bool DismissAsPlayerForTest() noexcept;
+        [[nodiscard]] bool IsShowing() const noexcept { return state_ == State::Showing; }
 
     private:
         void* Manager() const noexcept;

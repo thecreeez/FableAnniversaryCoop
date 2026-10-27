@@ -21,6 +21,7 @@ namespace fable::launcher::application
                 options.multiplayerSaveTest ||
                 options.multiplayerQuestTest ||
                 options.multiplayerFeatureTest ||
+                options.multiplayerCutsceneTest ||
                 options.multiplayerAuthorityTest ||
                 options.multiplayerCombatTest || options.multiplayerHeroWillTest ||
                 options.multiplayerPlaytest;
@@ -108,6 +109,10 @@ namespace fable::launcher::application
             if (options.multiplayerFeatureTest)
             {
                 return L"multiplayer_shared_features";
+            }
+            if (options.multiplayerCutsceneTest)
+            {
+                return L"multiplayer_shared_cutscene";
             }
             if (options.multiplayerRosterTest)
             {

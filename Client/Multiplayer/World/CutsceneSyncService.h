@@ -75,6 +75,12 @@ namespace fable::multiplayer::world
         // Game thread.
         bool Process();
         bool HandleReliableMessage(const TransportMessage& message) override;
+        // Acceptance seams (game thread).
+        [[nodiscard]] bool IsWaitPromptShowingForTest() noexcept
+        {
+            return prompt_.IsShowing() && prompt_.Poll() == game::native::NativePromptBox::State::Showing;
+        }
+        bool DismissWaitPromptForTest() noexcept { return prompt_.DismissAsPlayerForTest(); }
 
     private:
         enum class HoldState : std::uint8_t

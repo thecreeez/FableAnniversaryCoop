@@ -23,7 +23,8 @@ enum class MultiplayerScenario
     MapStress,
     Save,
     Quest,
-    Features
+    Features,
+    Cutscene
 };
 
 struct MultiplayerTestContext final

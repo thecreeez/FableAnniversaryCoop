@@ -182,6 +182,10 @@ int wmain(int argc, wchar_t** argv)
         {
             scenario = MultiplayerScenario::Features;
         }
+        else if (options.multiplayerCutsceneTest)
+        {
+            scenario = MultiplayerScenario::Cutscene;
+        }
         else if (options.multiplayerRosterTest)
         {
             scenario = MultiplayerScenario::Roster;
