@@ -46,8 +46,7 @@ namespace fable::multiplayer::world
     public:
         [[nodiscard]] ReliableMessageTypeSet HandledPacketTypes() const noexcept override
         {
-            static constexpr protocol::PacketType types[] = {
-                protocol::PacketType::ChestOpen, protocol::PacketType::DemonDoorOpen};
+            static constexpr protocol::PacketType types[] = {protocol::PacketType::ChestOpen};
             return {types, sizeof(types) / sizeof(types[0])};
         }
 
@@ -63,6 +62,27 @@ namespace fable::multiplayer::world
         // Game thread.
         bool Process();
         bool HandleReliableMessage(const TransportMessage& message) override;
+
+        // Demon door packets arrive through their own sink (one per packet
+        // type) and are handled here.
+        class DoorSink final : public ReliableMessageSink
+        {
+        public:
+            explicit DoorSink(ChestSyncService& owner) noexcept : owner_(owner) {}
+            [[nodiscard]] ReliableMessageTypeSet HandledPacketTypes() const noexcept override
+            {
+                static constexpr protocol::PacketType types[] = {protocol::PacketType::DemonDoorOpen};
+                return {types, sizeof(types) / sizeof(types[0])};
+            }
+            bool HandleReliableMessage(const TransportMessage& message) override
+            {
+                return owner_.HandleReliableMessage(message);
+            }
+
+        private:
+            ChestSyncService& owner_;
+        };
+        [[nodiscard]] ReliableMessageSink& Doors() noexcept { return doorSink_; }
 
     private:
         static constexpr std::size_t MessageBytes = 8 + 8 + 2;
@@ -88,6 +108,7 @@ namespace fable::multiplayer::world
         bool Send(const ChestOpen& message);
 
         static ChestSyncService* active_;
+        DoorSink doorSink_{*this};
         core::hooking::InlineHook reward_;
         RewardFn originalReward_ = nullptr;
         core::hooking::InlineHook doorSetOpen_;

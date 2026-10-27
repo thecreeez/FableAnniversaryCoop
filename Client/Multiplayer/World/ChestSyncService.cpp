@@ -23,6 +23,12 @@ namespace
         return &contexts.world.chestSync;
     }
 
+    fable::multiplayer::ReliableMessageSink* ResolveDemonDoorSink(
+        fable::multiplayer::MultiplayerSessionContexts& contexts) noexcept
+    {
+        return &contexts.world.chestSync.Doors();
+    }
+
     // CTCContainerRewardHero::Reward (this = container component): collects
     // the contents and gives them to the local Hero. push -1; push <SEH>.
     constexpr std::uintptr_t RewardRva = 0x01960350;
@@ -72,6 +78,14 @@ FABLE_RELIABLE_SINK_DESCRIPTOR(
     818u,
     "multiplayer-chest-dispatch",
     ResolveChestSink);
+
+FABLE_RELIABLE_SINK_DESCRIPTOR(
+    g_fableReliableSinkDemonDoor,
+    0x1015u,
+    "demon-door",
+    820u,
+    "multiplayer-demon-door-dispatch",
+    ResolveDemonDoorSink);
 
 namespace fable::multiplayer::world
 {
