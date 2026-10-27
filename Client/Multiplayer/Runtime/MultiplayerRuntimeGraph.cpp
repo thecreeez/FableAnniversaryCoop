@@ -140,6 +140,7 @@ namespace fable::multiplayer
         w.cutsceneSync.Initialize(role, actorId, t.transport, p.localHero, t.remotePlayerChannels, w.cutscenes, entities,
             e.entityPresence.LiveEntities(), diagnostics_);
         w.chestSync.Initialize(role, t.transport, e.entityPresence, e.entityIdentities, p.localHero, entities, diagnostics_);
+        a.killExperience.Initialize(role, t.transport, p.localHero, diagnostics_);
         a.enemyTargets.Initialize(entities, a.entityActions, w.entitySimulation, e.entityPresence,
             p.playerCombatants, p.localHero, t.remotePlayerChannels, diagnostics_);
         if (!w.worldSections.Initialize(
@@ -298,6 +299,7 @@ namespace fable::multiplayer
             w.worldSections.Shutdown();
             w.cutsceneSync.Shutdown();
             a.enemyTargets.Shutdown();
+            a.killExperience.Shutdown();
             w.chestSync.Shutdown();
             w.scriptTracer.Shutdown();
             w.hudMessageProbe.Shutdown();

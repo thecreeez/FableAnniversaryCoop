@@ -50,6 +50,7 @@ namespace fable::multiplayer::protocol
         Cutscene = 20,
         ChestOpen = 21,
         DemonDoorOpen = 22,
+        KillExperience = 23,
         Count,
     };
 
