@@ -17,6 +17,8 @@
 #include <string>
 #include <unordered_map>
 
+namespace fable::game::creature::animation { class CreatureAnimationService; }
+
 namespace fable::multiplayer
 {
     class UdpPeer;
@@ -53,6 +55,12 @@ namespace fable::multiplayer::replication
     class EntityActionReplication final : public ReliableMessageSink
     {
     public:
+        // Observers play the owner's resolved NPC animations through it.
+        void SetAnimationService(game::creature::animation::CreatureAnimationService* animation) noexcept
+        {
+            animation_ = animation;
+        }
+
         // NPCs this process simulates that recently aimed an action at a
         // player (local or remote Hero). Game thread.
         struct Engagement final
@@ -62,6 +70,13 @@ namespace fable::multiplayer::replication
         };
         [[nodiscard]] std::vector<Engagement> EngagedCreatures(
             std::uint64_t now, std::uint64_t window);
+        // Any NPC this process simulates whose last action within window
+        // targeted the player actor (acceptance checks).
+        // An NPC's hit on a player counts as engagement: many AI attacks
+        // (wasps' Fodder attacks) carry no target pointer.
+        static void __cdecl ObserveHit(void* context, std::uint64_t sourceThingUid, std::uint64_t targetThingUid);
+        [[nodiscard]] bool IsAnyEngagedWith(
+            std::uint64_t actorId, std::uint64_t now, std::uint64_t window) const;
 
         [[nodiscard]] ReliableMessageTypeSet HandledPacketTypes()
             const noexcept override
@@ -137,6 +152,10 @@ namespace fable::multiplayer::replication
             bool nativeReplayFailed = false;
             std::uint32_t nativeReplayAttempts = 0;
             std::uint64_t nextNativeReplayAt = 0;
+            // Retail animation the owner's action resolved (PlayAnimation,
+            // Fodder attacks); observers play the same clip on their copy.
+            std::uint32_t animationId = 0;
+            bool animationReplayed = false;
         };
 
         static void CaptureEvent(
@@ -182,7 +201,13 @@ namespace fable::multiplayer::replication
         void RecordEngagement(
             const game::creature::actions::CreatureActionLifecycleEvent& event);
         // creature pointer + local native uid -> last time it acted on a player
-        std::unordered_map<std::uint64_t, std::pair<void*, std::uint64_t>> engagements_;
+        struct EngagementRecord final
+        {
+            void* creature = nullptr;
+            std::uint64_t at = 0;
+            std::uint64_t targetActorId = 0;
+        };
+        std::unordered_map<std::uint64_t, EngagementRecord> engagements_;
         bool ReplayAuthoritativeNativeAction(ActiveAction& action);
         bool ReplayPendingAbilities();
         bool ReplayPendingNativeActions();
@@ -206,6 +231,20 @@ namespace fable::multiplayer::replication
         game::creature::actions::CreatureActionLifecycleObserver* observer_ =
             nullptr;
         game::creature::combat::CreatureCombatService* combat_ = nullptr;
+        game::creature::animation::CreatureAnimationService* animation_ = nullptr;
+        // Owner presentation (PlayAnimation) currently playing per fenced NPC
+        // native creature. The NPC's own AI submission runs with this clip.
+        // Read on engine threads at submission, written on the game thread.
+        struct OwnerPresentation final
+        {
+            std::uint32_t animationId = 0;
+            std::uint64_t receivedAt = 0;
+            bool started = false;
+        };
+        static bool PresentationGate(void* context, void* creature, const char* actionType, bool begin);
+        mutable SRWLOCK presentationLock_ = SRWLOCK_INIT;
+        std::unordered_map<void*, OwnerPresentation> ownerPresentations_;
+        std::atomic<std::uint64_t> presentationsStarted_{0};
         UdpPeer* transport_ = nullptr;
         authority::AuthorityReplication* authority_ = nullptr;
         entities::EntityLifecycleReplication* lifecycle_ = nullptr;

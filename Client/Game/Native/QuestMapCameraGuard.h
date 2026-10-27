@@ -14,4 +14,6 @@ namespace fable::game::native
     // -1, the value the function stores just before.
     bool InstallQuestMapCameraGuard(HMODULE gameModule, const core::Diagnostics& diagnostics) noexcept;
     void ShutdownQuestMapCameraGuard() noexcept;
+    // How often the guard skipped a missing camera (acceptance evidence).
+    [[nodiscard]] long QuestMapCameraGuardHits() noexcept;
 }

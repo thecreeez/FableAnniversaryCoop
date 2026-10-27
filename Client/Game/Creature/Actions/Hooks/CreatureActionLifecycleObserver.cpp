@@ -182,6 +182,7 @@ namespace fable::game::creature::actions
         updateDetour_.target = nullptr;
         updateDetour_.displacedBytes = 0;
         SetAuthorityGate(nullptr, nullptr);
+        SetPresentationGate(nullptr, nullptr);
         AcquireSRWLockExclusive(&eventSinkLock_);
         for (auto& subscription : eventSinks_) subscription = {};
         ReleaseSRWLockExclusive(&eventSinkLock_);
@@ -330,6 +331,20 @@ namespace fable::game::creature::actions
         }
         authorityGateContext_.store(context, std::memory_order_release);
         authorityGate_.store(gate, std::memory_order_release);
+    }
+
+    void CreatureActionLifecycleObserver::SetPresentationGate(
+        PresentationGate gate,
+        void* context) noexcept
+    {
+        if (gate == nullptr)
+        {
+            presentationGate_.store(nullptr, std::memory_order_release);
+            presentationGateContext_.store(nullptr, std::memory_order_release);
+            return;
+        }
+        presentationGateContext_.store(context, std::memory_order_release);
+        presentationGate_.store(gate, std::memory_order_release);
     }
 
     void CreatureActionLifecycleObserver::BeginAuthoritativeReplay() noexcept
@@ -637,7 +652,17 @@ namespace fable::game::creature::actions
                 creature,
                 activeAction))
         {
-            return;
+            // Pure presentation (an animation or idle) keeps playing on a
+            // fenced NPC: it decides and damages nothing, and freezing it
+            // left the NPC stuck mid-pose after simulation moved to another
+            // player.
+            char activeType[ActionNameCapacity] = {};
+            ReadActionType(activeAction, activeType);
+            if (std::strcmp(activeType, "CCreatureAction_PlayAnimation") != 0 &&
+                std::strcmp(activeType, "CCreatureAction_FodderIdle") != 0)
+            {
+                return;
+            }
         }
         observer->originalUpdate_(creature);
         observer->NotifyPostUpdate(creature);
@@ -675,14 +700,30 @@ namespace fable::game::creature::actions
         {
             previousAction = nullptr;
         }
-        const bool authorityDenied = !replaySubmission &&
+        bool authorityDenied = !replaySubmission &&
             gate != nullptr && !gate(
             observer->authorityGateContext_.load(
                 std::memory_order_acquire),
             creature,
             action);
+        // A fenced NPC's own AI may run the presentation action its owner is
+        // playing right now (the gate's callee substitutes the owner's clip).
+        const PresentationGate presentation = observer->presentationGate_.load(
+            std::memory_order_acquire);
+        void* const presentationContext = observer->presentationGateContext_.load(
+            std::memory_order_acquire);
+        const bool presented = authorityDenied && presentation != nullptr &&
+            presentation(presentationContext, creature, requestedType, true);
+        if (presented)
+        {
+            authorityDenied = false;
+        }
         const bool accepted = !authorityDenied &&
             observer->originalSubmit_(creature, action);
+        if (presented)
+        {
+            presentation(presentationContext, creature, requestedType, false);
+        }
         if (submissionReceiptDepth_ != 0 &&
             submissionReceiptCreature_ == creature)
         {
@@ -690,7 +731,7 @@ namespace fable::game::creature::actions
             submissionReceiptAccepted_ =
                 submissionReceiptAccepted_ || accepted;
         }
-        if (accepted && replaySubmission)
+        if (accepted && (replaySubmission || presented))
         {
             void* activeAction = nullptr;
             __try

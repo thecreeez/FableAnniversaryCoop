@@ -140,7 +140,7 @@ namespace fable::multiplayer::replication
             world->creature && world->generation == message.sourceGeneration &&
             world->mapEpoch == message.sourceMapEpoch &&
             world->mapId == message.sourceMapId &&
-            world->simulationOwnerActorId == message.sourceOwnerActorId;
+            entities::SimulationOwnerOf(*world) == message.sourceOwnerActorId;
     }
 
     CombatHitAdmissionOutcome CombatHitAuthorityPipeline::AcceptCandidate(

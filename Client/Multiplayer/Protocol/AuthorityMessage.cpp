@@ -42,7 +42,8 @@ namespace
                 message.operation != AuthorityOperation::Prepare &&
                 message.operation != AuthorityOperation::Prepared) ||
             (message.scope != AuthorityScope::MapSimulation &&
-                message.scope != AuthorityScope::EntityAction) ||
+                message.scope != AuthorityScope::EntityAction &&
+                message.scope != AuthorityScope::EntitySimulation) ||
             message.mapName.empty() || message.mapName.size() >= 96 ||
             (message.operation != AuthorityOperation::Request &&
                 message.operation != AuthorityOperation::Prepare &&
@@ -83,6 +84,13 @@ namespace
                 (message.operation == AuthorityOperation::Grant
                     ? message.mapBaselineRevision != 0
                     : message.mapBaselineRevision == 0);
+        }
+        if (message.scope == AuthorityScope::EntitySimulation)
+        {
+            return message.actionKind == ActionLeaseKind::None &&
+                message.entityUid != 0 && message.entityGeneration != 0 &&
+                message.mapId == 0 && message.actionEpoch != 0 &&
+                message.mapBaselineRevision == 0;
         }
         return message.actionKind >= ActionLeaseKind::Ambient &&
             message.actionKind <= ActionLeaseKind::PrimaryAttacker &&

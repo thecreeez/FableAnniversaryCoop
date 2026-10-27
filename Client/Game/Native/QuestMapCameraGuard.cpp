@@ -16,6 +16,7 @@ namespace
         0x8B, 0x10, 0x8B, 0xC8, 0x8B, 0x42, 0x08, 0xFF, 0xD0};
 
     std::uintptr_t gResume = 0;
+    volatile long gHits = 0;
     fable::core::hooking::CodePatch gPatch;
 
 #if defined(_M_IX86)
@@ -31,6 +32,7 @@ namespace
             call eax
             jmp dword ptr [gResume]
         missing_camera:
+            lock inc dword ptr [gHits]
             or eax, -1
             jmp dword ptr [gResume]
         }
@@ -61,6 +63,11 @@ namespace fable::game::native
             installed ? "quest screen tolerates a missing current camera" : "quest screen bytes did not match");
         return installed;
 #endif
+    }
+
+    long QuestMapCameraGuardHits() noexcept
+    {
+        return gHits;
     }
 
     void ShutdownQuestMapCameraGuard() noexcept

@@ -21,6 +21,8 @@ namespace fable::multiplayer
     class UdpPeer;
 }
 
+namespace fable::multiplayer::entities { struct WorldEntityRecord; }
+
 namespace fable::multiplayer::authority
 {
     // A map preparation request is not an acknowledgement.  Keep retry
@@ -164,6 +166,28 @@ namespace fable::multiplayer::authority
         [[nodiscard]] std::uint16_t ResolveMapId(
             const std::string& mapName) const noexcept;
         [[nodiscard]] bool IsHost() const noexcept;
+        // Host: makes actorId the simulation owner of one NPC within the
+        // current lease of its map (nearest player / ranged aggro). The map
+        // owner remains the default for NPCs without an assignment.
+        bool AssignEntitySimulation(
+            const EntityAuthorityKey& entity,
+            const std::string& mapName,
+            std::uint32_t mapEpoch,
+            std::uint64_t actorId);
+        // The player simulating this NPC: its assignment for the current map
+        // epoch, else the map owner; 0 if the map has no lease.
+        [[nodiscard]] std::uint64_t EntitySimulationOwner(
+            const EntityAuthorityKey& entity,
+            const std::string& mapName,
+            std::uint32_t mapEpoch) const noexcept;
+        // Assigned owner of the record's current incarnation, or 0.
+        static std::uint64_t ResolveSimulationOwner(
+            void* context, const entities::WorldEntityRecord& record);
+        // Changes whenever an NPC simulation assignment changes.
+        [[nodiscard]] std::uint64_t EntitySimulationRevision() const noexcept
+        {
+            return simulationRevision_;
+        }
         void Shutdown() noexcept;
 
     private:
@@ -193,6 +217,24 @@ namespace fable::multiplayer::authority
 
         MapAuthorityCoordinator maps_;
         ActionAuthorityCoordinator actions_;
+        struct SimulationAssignment final
+        {
+            std::uint64_t actorId = 0;
+            std::uint32_t mapEpoch = 0;
+            std::uint32_t epoch = 0;
+            std::string mapName;
+        };
+        [[nodiscard]] const SimulationAssignment* FindSimulationAssignment(
+            const EntityAuthorityKey& entity,
+            const std::string& mapName,
+            std::uint32_t mapEpoch) const noexcept;
+        bool ApplySimulationAssignment(const protocol::AuthorityMessage& message);
+        bool PublishSimulationAssignments();
+        std::unordered_map<EntityAuthorityKey, SimulationAssignment, EntityAuthorityKeyHash>
+            simulationAssignments_;
+        std::deque<protocol::AuthorityMessage> pendingSimulationAssignments_;
+        std::uint32_t nextSimulationEpoch_ = 0;
+        std::uint64_t simulationRevision_ = 0;
         world::MapIdentityRegistry mapIdentities_;
         MapAuthorityBaselineGate* mapBaselineGate_ = nullptr;
         UdpPeer* transport_ = nullptr;

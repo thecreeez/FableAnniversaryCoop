@@ -55,6 +55,21 @@ namespace fable::multiplayer::replication
     class CombatHitReplication final : public ReliableMessageSink
     {
     public:
+        void SetAppliedHitObserver(
+            combat::CombatHitApplicator::AppliedHitObserver observer, void* context) noexcept
+        {
+            applicator_.SetAppliedHitObserver(observer, context);
+        }
+
+        // Game thread: every native hit this process resolved (source and
+        // target Thing UIDs), e.g. to learn which NPC is fighting which player.
+        using HitObserver = void (*)(void* context, std::uint64_t sourceThingUid, std::uint64_t targetThingUid);
+        void SetHitObserver(HitObserver observer, void* context) noexcept
+        {
+            hitObserver_ = observer;
+            hitObserverContext_ = context;
+        }
+
         [[nodiscard]] ReliableMessageTypeSet HandledPacketTypes()
             const noexcept override
         {
@@ -160,5 +175,7 @@ namespace fable::multiplayer::replication
         unsigned int reportedDroppedNative_ = 0;
         bool publishBackpressured_ = false;
         bool initialized_ = false;
+        HitObserver hitObserver_ = nullptr;
+        void* hitObserverContext_ = nullptr;
     };
 }

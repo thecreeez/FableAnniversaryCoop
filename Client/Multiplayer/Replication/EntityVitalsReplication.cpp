@@ -217,8 +217,8 @@ namespace fable::multiplayer::replication
         // remote player drives an NPC reaction). They must not transfer the
         // canonical health/death writer. Vitals remain with the stable
         // high-simulation owner recorded by the entity lifecycle.
-        if (world->simulationOwnerActorId == 0 ||
-            world->simulationOwnerActorId != localActorId_)
+        if (entities::SimulationOwnerOf(*world) == 0 ||
+            entities::SimulationOwnerOf(*world) != localActorId_)
         {
             deferred = now >= event.observedAt &&
                 now - event.observedAt <= AuthorityGraceMilliseconds;
@@ -316,8 +316,8 @@ namespace fable::multiplayer::replication
                 lifecycle_->Directory().Find(canonicalUid);
             if (world == nullptr || !world->live || !world->available ||
                 !world->creature ||
-                world->simulationOwnerActorId == 0 ||
-                world->simulationOwnerActorId != localActorId_)
+                entities::SimulationOwnerOf(*world) == 0 ||
+                entities::SimulationOwnerOf(*world) != localActorId_)
             {
                 continue;
             }
@@ -538,8 +538,8 @@ namespace fable::multiplayer::replication
             !world->creature || world->generation != message.entityGeneration ||
             world->mapName != message.mapName ||
             world->mapEpoch != message.mapEpoch ||
-            world->simulationOwnerActorId == 0 ||
-            world->simulationOwnerActorId != sourceActorId)
+            entities::SimulationOwnerOf(*world) == 0 ||
+            entities::SimulationOwnerOf(*world) != sourceActorId)
         {
             diagnostics_.Event(
                 "MultiplayerEntityVitalsRejected",
@@ -936,8 +936,8 @@ namespace fable::multiplayer::replication
                 continue;
             }
             const bool localIsPublisher =
-                world->simulationOwnerActorId != 0 &&
-                world->simulationOwnerActorId == localActorId_;
+                entities::SimulationOwnerOf(*world) != 0 &&
+                entities::SimulationOwnerOf(*world) == localActorId_;
             if (!IsRemoteEntityHealthReplica(
                     *world,
                     live,
@@ -954,7 +954,7 @@ namespace fable::multiplayer::replication
                 existing->second.generation == world->generation &&
                 existing->second.mapEpoch == world->mapEpoch &&
                 existing->second.ownerActorId ==
-                    world->simulationOwnerActorId)
+                    entities::SimulationOwnerOf(*world))
             {
                 continue;
             }
@@ -976,7 +976,7 @@ namespace fable::multiplayer::replication
                     world->generation,
                     world->mapEpoch,
                     static_cast<unsigned long long>(
-                        world->simulationOwnerActorId),
+                        entities::SimulationOwnerOf(*world)),
                     live.thing);
                 diagnostics_.Event(
                     "MultiplayerEntityHealthProtectionFailed",
@@ -987,7 +987,7 @@ namespace fable::multiplayer::replication
                 live.thing,
                 world->generation,
                 world->mapEpoch,
-                world->simulationOwnerActorId};
+                entities::SimulationOwnerOf(*world)};
             char detail[256] = {};
             std::snprintf(
                 detail,
@@ -997,7 +997,7 @@ namespace fable::multiplayer::replication
                 world->generation,
                 world->mapEpoch,
                 static_cast<unsigned long long>(
-                    world->simulationOwnerActorId),
+                    entities::SimulationOwnerOf(*world)),
                 live.thing);
             diagnostics_.Event(
                 "MultiplayerEntityHealthProtectionBound",

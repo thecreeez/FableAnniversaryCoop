@@ -8,6 +8,7 @@
 #include "Multiplayer/Transport/TransportMessage.h"
 #include "Multiplayer/Transport/UdpPeer.h"
 
+#include <Windows.h>
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -119,11 +120,24 @@ namespace fable::multiplayer::entities
                 }
             }
         }
-        if (ownsMap)
+        if (canPublishOwnedChanges && !SweepOwnedRoster(liveEntities, localMap, localMapId, lease->epoch))
+        {
+            return false;
+        }
+        if (ownsMap && canPublishOwnedMap)
         {
             lastOwnedMapId_ = localMapId;
             lastOwnedMapEpoch_ = lease->epoch;
             lastOwnedRosterReady_ = ownerRosterReady;
+        }
+        else if (ownsMap)
+        {
+            // Not yet publishable (e.g. re-taking a map whose roster is still
+            // from an older epoch): keep the lease unrecorded, so the full
+            // owner snapshot is still sent once the roster turns ready.
+            // Recording it here made a returning owner skip that snapshot and
+            // left every NPC loaded with the map without a canonical record.
+            lastOwnedRosterReady_ = false;
         }
         else
         {
@@ -155,6 +169,44 @@ namespace fable::multiplayer::entities
             knownPeerRevision_ = peerRevision;
         }
         return PublishPending();
+    }
+
+    bool EntityLifecycleReplication::SweepOwnedRoster(
+        const LiveEntityRegistry& liveEntities,
+        const std::string& localMap,
+        const std::uint16_t localMapId,
+        const std::uint32_t mapEpoch)
+    {
+        const std::uint64_t now = GetTickCount64();
+        if (now < nextRosterSweepAt_) return true;
+        nextRosterSweepAt_ = now + RosterSweepMilliseconds;
+        std::size_t published = 0;
+        for (const LiveEntityRecord& live : liveEntities.Snapshot())
+        {
+            if (live.thing == nullptr || !LiveEntityRegistry::IsReplicable(live) ||
+                (live.mapId != 0 && live.mapId != localMapId))
+            {
+                continue;
+            }
+            const WorldEntityRecord* const canonical = directory_.Find(live.thingUid);
+            if (canonical != nullptr && canonical->live && canonical->available &&
+                canonical->mapId == localMapId)
+            {
+                continue;
+            }
+            LiveEntityChange change;
+            change.kind = LiveEntityChangeKind::Registered;
+            change.record = live;
+            if (!ObserveLocalChange(change, localMap, localMapId, mapEpoch)) return false;
+            ++published;
+        }
+        if (published != 0)
+        {
+            char detail[128] = {};
+            std::snprintf(detail, sizeof(detail), "map=%s published=%zu", localMap.c_str(), published);
+            diagnostics_.Event("MultiplayerEntityRosterSweep", detail);
+        }
+        return true;
     }
 
     bool EntityLifecycleReplication::ObserveLocalChange(

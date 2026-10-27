@@ -6,6 +6,27 @@
 
 namespace fable::multiplayer::entities
 {
+    namespace
+    {
+        SimulationOwnerResolver gSimulationOwnerResolver = nullptr;
+        void* gSimulationOwnerContext = nullptr;
+    }
+
+    void SetSimulationOwnerResolver(SimulationOwnerResolver resolver, void* context) noexcept
+    {
+        gSimulationOwnerContext = context;
+        gSimulationOwnerResolver = resolver;
+    }
+
+    std::uint64_t SimulationOwnerOf(const WorldEntityRecord& record) noexcept
+    {
+        const SimulationOwnerResolver resolver = gSimulationOwnerResolver;
+        const std::uint64_t assigned = resolver != nullptr
+            ? resolver(gSimulationOwnerContext, record)
+            : 0;
+        return assigned != 0 ? assigned : record.simulationOwnerActorId;
+    }
+
     bool WorldEntityDirectory::HostObserve(
         const LiveEntityChange& change,
         const std::string& mapName,

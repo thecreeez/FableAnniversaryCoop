@@ -190,6 +190,13 @@ namespace fable::multiplayer::replication
             std::lock_guard<std::mutex> lock(nativeMutex_);
             captured.swap(nativeEvents_);
         }
+        if (hitObserver_ != nullptr)
+        {
+            for (const auto& event : captured)
+            {
+                hitObserver_(hitObserverContext_, event.sourceThingUid, event.targetThingUid);
+            }
+        }
         std::deque<DeferredNative> retries;
         while (!deferredNative_.empty())
         {

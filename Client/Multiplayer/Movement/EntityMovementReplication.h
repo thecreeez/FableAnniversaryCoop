@@ -168,6 +168,11 @@ namespace fable::multiplayer::movement
         std::uint64_t knownPeerRevision_ = 0;
         std::uint64_t knownObserverReadinessRevision_ = 0;
         std::uint32_t rejectionReportCount_ = 0;
+        // Periodic NPC movement summary (diagnostics only).
+        std::uint64_t nextSummaryAt_ = 0;
+        std::uint32_t publishedInWindow_ = 0;
+        std::uint32_t acceptedInWindow_ = 0;
+        std::unordered_set<std::uint64_t> capturedInWindow_;
         std::string ownedMap_;
         std::uint32_t ownedMapEpoch_ = 0;
         std::atomic_bool captureEnabled_{false};

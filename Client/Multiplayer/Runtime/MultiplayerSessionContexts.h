@@ -9,6 +9,7 @@
 #include "Game/Native/ScriptInterfaceTracer.h"
 #include "Game/Native/HudMessageProbe.h"
 #include "Multiplayer/Combat/EnemyTargetDistributor.h"
+#include "Multiplayer/Combat/NearestPlayerSimulationAssigner.h"
 #include "Multiplayer/Combat/KillExperienceShare.h"
 #include "Multiplayer/Authority/AuthorityReplication.h"
 #include "Multiplayer/Authority/EntitySimulationAuthority.h"
@@ -102,6 +103,7 @@ namespace fable::multiplayer
         replication::EntityVitalsReplication entityVitals;
         combat::PlayerDeathCoordinator playerDeath;
         combat::EnemyTargetDistributor enemyTargets;
+        combat::NearestPlayerSimulationAssigner npcSimulation;
         combat::KillExperienceShare killExperience;
     };
 

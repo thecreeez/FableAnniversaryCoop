@@ -1,4 +1,5 @@
 #include "AuthorityReplication.h"
+#include "Multiplayer/Entities/WorldEntityDirectory.h"
 #include "Multiplayer/Runtime/MultiplayerSessionContexts.h"
 #include "Multiplayer/Transport/ReliableSinkDescriptorRegistry.h"
 
@@ -10,6 +11,8 @@
 #include <Windows.h>
 
 #include <array>
+#include <iterator>
+#include <cstdio>
 #include <algorithm>
 #include <utility>
 
@@ -355,9 +358,17 @@ namespace fable::multiplayer::authority
             }
             applied = maps_.Apply(message);
         }
+        else if (message.scope == protocol::AuthorityScope::EntitySimulation)
+        {
+            applied = ApplySimulationAssignment(message);
+        }
         else if (message.scope == protocol::AuthorityScope::EntityAction)
         {
-            const MapAuthorityLease* const map = maps_.Find(message.mapId);
+            // Action grants carry no map id on the wire (the codec requires
+            // 0 for this scope); the map name identifies the lease.
+            const MapAuthorityLease* const map = message.mapId != 0
+                ? maps_.Find(message.mapId)
+                : maps_.Find(message.mapName);
             if (message.operation == protocol::AuthorityOperation::Release ||
                 (map != nullptr && map->epoch == message.mapEpoch))
             {
@@ -783,7 +794,7 @@ namespace fable::multiplayer::authority
             }
             transportBackpressureReported_ = false;
         }
-        return true;
+        return PublishSimulationAssignments();
     }
 
     const ActionAuthorityLease* AuthorityReplication::FindActionLease(
@@ -830,21 +841,201 @@ namespace fable::multiplayer::authority
     }
 
     bool AuthorityReplication::IsEntityPublisher(
-        const EntityAuthorityKey&,
+        const EntityAuthorityKey& entity,
         const std::string& mapName,
         std::uint64_t actorId,
         std::uint32_t mapEpoch) const noexcept
     {
-        return IsMapPublisher(mapName, actorId, mapEpoch);
+        const MapAuthorityLease* const lease = maps_.Find(mapName);
+        if (lease == nullptr || actorId == 0 || mapEpoch == 0 ||
+            lease->epoch != mapEpoch)
+        {
+            return false;
+        }
+        const SimulationAssignment* const assigned =
+            FindSimulationAssignment(entity, mapName, mapEpoch);
+        return assigned != nullptr
+            ? assigned->actorId == actorId
+            : lease->actorId == actorId;
     }
 
     bool AuthorityReplication::IsEntityPublisher(
-        const EntityAuthorityKey&,
+        const EntityAuthorityKey& entity,
         const std::uint16_t mapId,
         const std::uint64_t actorId,
         const std::uint32_t mapEpoch) const noexcept
     {
-        return IsMapPublisher(mapId, actorId, mapEpoch);
+        const MapAuthorityLease* const lease = maps_.Find(mapId);
+        if (lease == nullptr)
+        {
+            return false;
+        }
+        return IsEntityPublisher(entity, lease->mapName, actorId, mapEpoch);
+    }
+
+    const AuthorityReplication::SimulationAssignment*
+        AuthorityReplication::FindSimulationAssignment(
+            const EntityAuthorityKey& entity,
+            const std::string& mapName,
+            const std::uint32_t mapEpoch) const noexcept
+    {
+        const auto found = simulationAssignments_.find(entity);
+        if (found == simulationAssignments_.end() ||
+            found->second.mapEpoch != mapEpoch ||
+            found->second.mapName != mapName)
+        {
+            return nullptr;
+        }
+        return &found->second;
+    }
+
+    std::uint64_t AuthorityReplication::EntitySimulationOwner(
+        const EntityAuthorityKey& entity,
+        const std::string& mapName,
+        const std::uint32_t mapEpoch) const noexcept
+    {
+        const MapAuthorityLease* const lease = maps_.Find(mapName);
+        if (lease == nullptr || lease->epoch != mapEpoch)
+        {
+            return 0;
+        }
+        const SimulationAssignment* const assigned =
+            FindSimulationAssignment(entity, mapName, mapEpoch);
+        return assigned != nullptr ? assigned->actorId : lease->actorId;
+    }
+
+    std::uint64_t AuthorityReplication::ResolveSimulationOwner(
+        void* const context, const entities::WorldEntityRecord& record)
+    {
+        const auto* const self = static_cast<const AuthorityReplication*>(context);
+        if (self == nullptr || record.thingUid == 0 || record.generation == 0)
+        {
+            return 0;
+        }
+        const SimulationAssignment* const assigned = self->FindSimulationAssignment(
+            {record.thingUid, record.generation}, record.mapName, record.mapEpoch);
+        return assigned != nullptr ? assigned->actorId : 0;
+    }
+
+    bool AuthorityReplication::AssignEntitySimulation(
+        const EntityAuthorityKey& entity,
+        const std::string& mapName,
+        const std::uint32_t mapEpoch,
+        const std::uint64_t actorId)
+    {
+        if (role_ != PeerRole::Host || entity.thingUid == 0 ||
+            entity.generation == 0 || actorId == 0 || mapName.empty())
+        {
+            return false;
+        }
+        const MapAuthorityLease* const lease = maps_.Find(mapName);
+        if (lease == nullptr || lease->epoch != mapEpoch)
+        {
+            return false;
+        }
+        if (EntitySimulationOwner(entity, mapName, mapEpoch) == actorId)
+        {
+            return true;
+        }
+        protocol::AuthorityMessage message;
+        message.operation = protocol::AuthorityOperation::Grant;
+        message.scope = protocol::AuthorityScope::EntitySimulation;
+        message.ownerActorId = actorId;
+        message.entityUid = entity.thingUid;
+        message.entityGeneration = entity.generation;
+        message.mapEpoch = mapEpoch;
+        message.actionEpoch = ++nextSimulationEpoch_;
+        message.mapName = mapName;
+        if (!ApplySimulationAssignment(message))
+        {
+            return false;
+        }
+        pendingSimulationAssignments_.push_back(std::move(message));
+        return true;
+    }
+
+    bool AuthorityReplication::ApplySimulationAssignment(
+        const protocol::AuthorityMessage& message)
+    {
+        const EntityAuthorityKey key{message.entityUid, message.entityGeneration};
+        const auto existing = simulationAssignments_.find(key);
+        if (existing != simulationAssignments_.end() &&
+            existing->second.mapEpoch == message.mapEpoch &&
+            existing->second.mapName == message.mapName &&
+            existing->second.epoch >= message.actionEpoch)
+        {
+            return false;
+        }
+        if (message.operation == protocol::AuthorityOperation::Release)
+        {
+            if (existing != simulationAssignments_.end())
+            {
+                simulationAssignments_.erase(existing);
+                ++simulationRevision_;
+            }
+            return true;
+        }
+        if (message.operation != protocol::AuthorityOperation::Grant ||
+            message.ownerActorId == 0)
+        {
+            return false;
+        }
+        // Bounded: assignments only matter for the current lease of a map.
+        if (simulationAssignments_.size() >= 4096)
+        {
+            for (auto iterator = simulationAssignments_.begin();
+                iterator != simulationAssignments_.end();)
+            {
+                const MapAuthorityLease* const lease = maps_.Find(iterator->second.mapName);
+                iterator = lease == nullptr || lease->epoch != iterator->second.mapEpoch
+                    ? simulationAssignments_.erase(iterator)
+                    : std::next(iterator);
+            }
+        }
+        simulationAssignments_[key] = {
+            message.ownerActorId, message.mapEpoch, message.actionEpoch, message.mapName};
+        if (message.actionEpoch > nextSimulationEpoch_)
+        {
+            nextSimulationEpoch_ = message.actionEpoch;
+        }
+        ++simulationRevision_;
+        char detail[256] = {};
+        std::snprintf(detail, sizeof(detail),
+            "thing_uid=%016llX generation=%u owner=%llu map=%s map_epoch=%u epoch=%u local=%d",
+            static_cast<unsigned long long>(message.entityUid), message.entityGeneration,
+            static_cast<unsigned long long>(message.ownerActorId), message.mapName.c_str(),
+            message.mapEpoch, message.actionEpoch, message.ownerActorId == localActorId_ ? 1 : 0);
+        diagnostics_.Event("MultiplayerEntitySimulationAssigned", detail);
+        return true;
+    }
+
+    bool AuthorityReplication::PublishSimulationAssignments()
+    {
+        while (!pendingSimulationAssignments_.empty())
+        {
+            const protocol::AuthorityMessage& message = pendingSimulationAssignments_.front();
+            std::array<std::uint8_t, protocol::MaximumDatagramBytes> payload = {};
+            std::size_t payloadSize = 0;
+            if (!protocol::EncodeAuthorityMessage(
+                    message, payload.data(), protocol::MaximumPayloadBytes(), payloadSize))
+            {
+                pendingSimulationAssignments_.pop_front();
+                diagnostics_.Event(
+                    "MultiplayerAuthorityReplicationFailed",
+                    "host produced an invalid NPC simulation assignment");
+                continue;
+            }
+            if (!transport_->SubmitReliable(
+                    reliable_stream::Control,
+                    protocol::PacketType::Authority,
+                    payload.data(),
+                    payloadSize))
+            {
+                return !transport_->HasFailed();
+            }
+            pendingSimulationAssignments_.pop_front();
+        }
+        return true;
     }
 
     bool AuthorityReplication::IsEntityActionPublisher(
@@ -860,7 +1051,7 @@ namespace fable::multiplayer::authority
         {
             return action->actorId == actorId;
         }
-        return IsMapPublisher(mapName, actorId, mapEpoch);
+        return IsEntityPublisher(entity, mapName, actorId, mapEpoch);
     }
 
     bool AuthorityReplication::HasEntityActionPublisher(
@@ -892,6 +1083,10 @@ namespace fable::multiplayer::authority
     {
         maps_.Clear();
         actions_.Clear();
+        simulationAssignments_.clear();
+        pendingSimulationAssignments_.clear();
+        nextSimulationEpoch_ = 0;
+        ++simulationRevision_;
         mapIdentities_.Clear();
         mapBaselineGate_ = nullptr;
         transport_ = nullptr;

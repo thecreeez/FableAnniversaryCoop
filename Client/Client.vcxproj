@@ -228,6 +228,7 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClCompile Include="Multiplayer\World\ChestSyncService.cpp" />
     <ClCompile Include="Game\Quest\Sync\QuestScreenHook.cpp" />
     <ClCompile Include="Multiplayer\Combat\EnemyTargetDistributor.cpp" />
+    <ClCompile Include="Multiplayer\Combat\NearestPlayerSimulationAssigner.cpp" />
     <ClCompile Include="Game\Creature\Actions\Native\CreatureMotionActionFunctions.cpp" />
     <ClCompile Include="Game\Native\ScriptInterfaceTracer.cpp" />
     <ClCompile Include="Game\Native\HudMessageProbe.cpp" />
@@ -554,6 +555,7 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClInclude Include="Multiplayer\World\ChestSyncService.h" />
     <ClInclude Include="Game\Quest\Sync\QuestScreenHook.h" />
     <ClInclude Include="Multiplayer\Combat\EnemyTargetDistributor.h" />
+    <ClInclude Include="Multiplayer\Combat\NearestPlayerSimulationAssigner.h" />
     <ClInclude Include="Game\Creature\Actions\Native\CreatureMotionActionFunctions.h" />
     <ClInclude Include="Game\Native\ScriptInterfaceTracer.h" />
     <ClInclude Include="Game\Native\HudMessageProbe.h" />

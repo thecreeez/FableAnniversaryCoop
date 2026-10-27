@@ -119,7 +119,7 @@ namespace fable::multiplayer::combat
         if (canonical == 0 || world == nullptr || !world->live ||
             !world->available || !world->creature || world->generation == 0 ||
             world->mapEpoch == 0 || world->mapId == 0 ||
-            world->simulationOwnerActorId == 0)
+            entities::SimulationOwnerOf(*world) == 0)
         {
             return false;
         }
@@ -129,7 +129,7 @@ namespace fable::multiplayer::combat
             world->generation,
             world->mapEpoch};
         participant.mapId = world->mapId;
-        participant.ownerActorId = world->simulationOwnerActorId;
+        participant.ownerActorId = entities::SimulationOwnerOf(*world);
         return true;
     }
 
@@ -238,8 +238,8 @@ namespace fable::multiplayer::combat
             const entities::WorldEntityRecord* const world =
                 lifecycle_->Directory().Find(source.lifecycle.subjectId);
             if (world == nullptr ||
-                world->simulationOwnerActorId == 0 ||
-                world->simulationOwnerActorId != localActorId_)
+                entities::SimulationOwnerOf(*world) == 0 ||
+                entities::SimulationOwnerOf(*world) != localActorId_)
             {
                 return false;
             }

@@ -41,6 +41,14 @@ namespace fable::multiplayer::combat
     class CombatHitApplicator final
     {
     public:
+        // Game thread: every hit result this process applied.
+        using AppliedHitObserver = void (*)(void* context, const protocol::CombatHitMessage& hit);
+        void SetAppliedHitObserver(AppliedHitObserver observer, void* context) noexcept
+        {
+            appliedHitObserver_ = observer;
+            appliedHitObserverContext_ = context;
+        }
+
         void Initialize(
             std::uint64_t localActorId,
             PlayerCombatantDirectory& combatants,
@@ -58,6 +66,8 @@ namespace fable::multiplayer::combat
         void Shutdown() noexcept;
 
     private:
+        AppliedHitObserver appliedHitObserver_ = nullptr;
+        void* appliedHitObserverContext_ = nullptr;
         [[nodiscard]] void* ResolveTarget(
             const protocol::CombatHitMessage& result) const noexcept;
         [[nodiscard]] void* ResolveSource(

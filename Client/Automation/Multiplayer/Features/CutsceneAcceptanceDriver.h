@@ -8,6 +8,7 @@
 namespace fable::game
 {
     class EntityService;
+    class PlayerService;
 }
 
 namespace fable::multiplayer
@@ -23,6 +24,11 @@ namespace fable::automation::multiplayer::features
     // the box the way a player's click does, which must lend control back and
     // move the host back to Lookout Point. The host enters again, the guest
     // follows once it has seen that, and the cutscene must play on both.
+    // Then enemies, keeping the players far apart and only ever moving them
+    // to spots a wasp or a player occupies: the host is moved to a wasp it
+    // simulates until it is hit; the wasp is moved to the guest until the
+    // guest is hit; the guest then moves to the host and the host to the
+    // wasp, which must attack the host again.
     class CutsceneAcceptanceDriver final
     {
     public:
@@ -30,6 +36,7 @@ namespace fable::automation::multiplayer::features
             bool enabled,
             bool host,
             game::EntityService& entities,
+            game::PlayerService& players,
             ::fable::multiplayer::MultiplayerRuntimeGraph& multiplayer,
             const core::Diagnostics& diagnostics) noexcept;
         void Tick(bool remotePresentationReady) noexcept;
@@ -47,6 +54,14 @@ namespace fable::automation::multiplayer::features
             HostReenter,
             GuestWatchHost,
             GuestEnter,
+            AwaitCutsceneEnd,
+            HostToWasp,
+            HostAwaitWaspAttack,
+            HostAwaitGuestAttacked,
+            HostAwaitGuestArrival,
+            HostAwaitWaspAttackAgain,
+            GuestAwaitHostArrival,
+            GuestAwaitHit,
             Done,
             Failed,
         };
@@ -64,8 +79,20 @@ namespace fable::automation::multiplayer::features
         bool TravelTo(const char* mapName, std::uint64_t now) noexcept;
         [[nodiscard]] std::uint16_t LocalMapId() const noexcept;
         [[nodiscard]] bool LocalMapIs(const char* mapName) const noexcept;
+        bool TeleportLocalHero(const float (&position)[3], const char* reason) noexcept;
+        // Host: the nearest wasp this process simulates; false if none.
+        bool FindWasp(std::uint64_t& uid, float (&position)[3]) noexcept;
+        bool WaspPosition(float (&position)[3]) noexcept;
+        // Guest: the wasp nearest a point (the host's last fighting spot).
+        bool FindWaspNear(const float (&nearby)[3], std::uint64_t& uid, float (&position)[3]) noexcept;
+        // True once the local Hero lost health since the baseline; heals it.
+        bool LocalHeroWasHit() noexcept;
+        [[nodiscard]] float DistanceToRemote() const noexcept;
+        [[nodiscard]] bool RemoteHost(std::uint64_t& actorId, float (&position)[3]) const noexcept;
 
         game::EntityService* entities_ = nullptr;
+        game::PlayerService* players_ = nullptr;
+        float healthBaseline_ = 0.0f;
         ::fable::multiplayer::MultiplayerRuntimeGraph* multiplayer_ = nullptr;
         core::Diagnostics diagnostics_ = {};
         std::atomic<Phase> phase_{Phase::WaitingForWorld};
@@ -78,6 +105,13 @@ namespace fable::automation::multiplayer::features
         int hostVisits_ = 0;
         std::uint16_t lastHostMap_ = 0;
         std::uint64_t promptSeenAt_ = 0;
+        bool sawCutscene_ = false;
+        std::uint64_t waspUid_ = 0;
+        std::uint64_t nextWaspTeleportAt_ = 0;
+        // Guest: where the host was while fighting away from the guest.
+        float hostFightAt_[3] = {};
+        bool hostFightSeen_ = false;
+
         bool host_ = false;
         bool enabled_ = false;
     };

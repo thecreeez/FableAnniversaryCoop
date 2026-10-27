@@ -269,7 +269,12 @@ namespace fable::multiplayer::authority
                         localActorId_,
                         record->mapEpoch);
                 }
-                if (!canSimulate && ownsLiveMap)
+                // The map owner's fallback never takes an NPC the host
+                // assigned to another player (nearest player / ranged aggro).
+                const std::uint64_t assignedOwner = authority_->EntitySimulationOwner(
+                    {record->thingUid, record->generation}, record->mapName, record->mapEpoch);
+                if (!canSimulate && ownsLiveMap &&
+                    (assignedOwner == 0 || assignedOwner == localActorId_))
                 {
                     canSimulate = true;
                     ++ownedMapFallback;

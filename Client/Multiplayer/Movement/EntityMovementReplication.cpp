@@ -431,6 +431,7 @@ namespace fable::multiplayer::movement
                 continue;
             }
 
+            capturedInWindow_.insert(canonicalUid);
             LocalPublishState& state = localStates_[canonicalUid];
             if (!state.hasPrevious ||
                 state.current.entityGeneration != world->generation ||
@@ -531,6 +532,7 @@ namespace fable::multiplayer::movement
             {
                 return false;
             }
+            ++publishedInWindow_;
             if (state.current.moving &&
                 publishedMovingEntities_.insert(entityUid).second)
             {
@@ -676,6 +678,7 @@ namespace fable::multiplayer::movement
             return reject("host-checkpoint-fence");
         }
         currentSamples_[message.entityUid] = {message, receivedAt};
+        ++acceptedInWindow_;
         if (message.moving &&
             acceptedMovingEntities_.insert(message.entityUid).second)
         {
@@ -738,6 +741,65 @@ namespace fable::multiplayer::movement
         const entities::LiveEntityRegistry& liveEntities,
         const std::string& localMap)
     {
+        const std::uint64_t summaryNow = GetTickCount64();
+        if (summaryNow >= nextSummaryAt_)
+        {
+            nextSummaryAt_ = summaryNow + 5'000;
+            // Remote samples on this map that no playback consumes, by reason.
+            std::size_t remote = 0;
+            std::size_t aged = 0;
+            std::size_t noLive = 0;
+            std::size_t noRecord = 0;
+            std::size_t recordMismatch = 0;
+            std::size_t notPublisher = 0;
+            std::size_t unbound = 0;
+            for (const auto& [uid, sample] : currentSamples_)
+            {
+                const protocol::EntityMovementMessage& message = sample.message;
+                if (message.mapName != localMap || message.ownerActorId == localActorId_) continue;
+                ++remote;
+                if (summaryNow - sample.receivedAt > 3'000) ++aged;
+                const entities::LiveEntityRecord* const live = liveEntities.Find(uid);
+                const entities::WorldEntityRecord* const world = lifecycle_->Directory().Find(uid);
+                if (live == nullptr || !live->creature) ++noLive;
+                else if (world == nullptr) ++noRecord;
+                else if (!world->live || !world->available || world->generation != message.entityGeneration ||
+                    world->mapEpoch != message.mapEpoch) ++recordMismatch;
+                else if (!authority_->IsEntityPublisher({world->thingUid, world->generation},
+                    message.mapName, message.ownerActorId, message.mapEpoch)) ++notPublisher;
+                else if (playbacks_.find(uid) == playbacks_.end()) ++unbound;
+            }
+            // Owner side: per NPC, whether its native frame was captured in
+            // this window (c/-) and whether it last moved (m/s).
+            std::string owned;
+            for (const auto& [uid, state] : localStates_)
+            {
+                if (owned.size() > 900) break;
+                const entities::LiveEntityRecord* const live = liveEntities.Find(uid);
+                char entry[96] = {};
+                std::snprintf(entry, sizeof(entry), " %s:%c%c",
+                    live != nullptr ? live->scriptName.c_str() : "?",
+                    capturedInWindow_.count(uid) != 0 ? 'c' : '-',
+                    state.hasCurrent && state.current.moving ? 'm' : 's');
+                owned += entry;
+            }
+            std::size_t ownedMapCreatures = 0;
+            for (const auto& live : liveEntities.Snapshot())
+            {
+                if (live.creature && entities::LiveEntityRegistry::IsReplicable(live)) ++ownedMapCreatures;
+            }
+            char detail[1400] = {};
+            std::snprintf(detail, sizeof(detail),
+                "map=%s published=%u accepted=%u replicable_live=%zu local_publishers=%zu captured=%zu remote_samples=%zu aged_3s=%zu playbacks=%zu no_live=%zu no_record=%zu record_mismatch=%zu not_publisher=%zu unbound=%zu owned=[%s ]",
+                localMap.c_str(), publishedInWindow_, acceptedInWindow_, ownedMapCreatures, localStates_.size(),
+                capturedInWindow_.size(), remote, aged, playbacks_.size(), noLive, noRecord, recordMismatch,
+                notPublisher, unbound, owned.c_str());
+            diagnostics_.Event("MultiplayerEntityMovementSummary", detail);
+            publishedInWindow_ = 0;
+            acceptedInWindow_ = 0;
+            capturedInWindow_.clear();
+        }
+
         std::vector<std::uint64_t> stale;
         for (const auto& entry : playbacks_)
         {
@@ -746,10 +808,17 @@ namespace fable::multiplayer::movement
             const auto current = currentSamples_.find(entityUid);
             const entities::LiveEntityRecord* const live =
                 liveEntities.Find(entityUid);
+            const entities::WorldEntityRecord* const world =
+                lifecycle_->Directory().Find(entityUid);
+            // An NPC handed to this player (nearest / ranged aggro) stops
+            // consuming the previous owner's movement at once.
+            const bool ownerChanged = current != currentSamples_.end() && world != nullptr &&
+                !authority_->IsEntityPublisher({world->thingUid, world->generation},
+                    world->mapName, current->second.message.ownerActorId, world->mapEpoch);
             if (current == currentSamples_.end() || live == nullptr ||
                 live->thing != playback.nativeThing ||
                 current->second.message.mapName != localMap ||
-                current->second.message.ownerActorId == localActorId_)
+                current->second.message.ownerActorId == localActorId_ || ownerChanged)
             {
                 stale.push_back(entityUid);
             }

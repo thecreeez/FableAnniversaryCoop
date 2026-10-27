@@ -46,6 +46,15 @@ namespace fable::multiplayer::entities
         std::string scriptName;
     };
 
+    // The player whose native creature simulates this NPC right now: the
+    // host's per-NPC assignment (nearest player, ranged aggro) when one is
+    // registered for the record's map epoch, else the record's map owner.
+    // Health, death and hit resolution follow this writer.
+    using SimulationOwnerResolver = std::uint64_t(*)(
+        void* context, const WorldEntityRecord& record);
+    void SetSimulationOwnerResolver(SimulationOwnerResolver resolver, void* context) noexcept;
+    [[nodiscard]] std::uint64_t SimulationOwnerOf(const WorldEntityRecord& record) noexcept;
+
     struct MapRosterCompletion final
     {
         std::uint64_t simulationOwnerActorId = 0;

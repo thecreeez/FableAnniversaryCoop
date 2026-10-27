@@ -1,4 +1,5 @@
 #include "Game/Native/QuestMapCameraGuard.h"
+#include "Multiplayer/Entities/WorldEntityDirectory.h"
 #include "MultiplayerRuntimeGraph.h"
 
 #include "Automation/Runtime/RuntimeConfiguration.h"
@@ -112,6 +113,7 @@ namespace fable::multiplayer
         p.localHero.Initialize(entities, locomotion, t.localPlayerChannel, t.transport, p.playerCombatants, diagnostics_, role, actorId, sessionAuthorityEpoch, playerId, appearance, configuration.MorphSelfTest());
         p.actorState.Initialize(role, actorId, t.transport, sessionAuthorityEpoch, p.localHero, t.remotePlayerChannels, diagnostics_);
         w.authority.Initialize(role, actorId, t.transport, diagnostics_);
+        entities::SetSimulationOwnerResolver(&authority::AuthorityReplication::ResolveSimulationOwner, &w.authority);
         w.mapTransitionAuthority.Initialize(w.authority, diagnostics_);
         e.entityIdentities.Initialize(diagnostics_);
         e.entityPresence.Initialize(e.entityIdentities, diagnostics_);
@@ -141,8 +143,12 @@ namespace fable::multiplayer
             e.entityPresence.LiveEntities(), diagnostics_);
         w.chestSync.Initialize(role, t.transport, e.entityPresence, e.entityIdentities, p.localHero, entities, diagnostics_);
         a.killExperience.Initialize(role, t.transport, p.localHero, diagnostics_);
+        a.combatHits.SetHitObserver(&replication::EntityActionReplication::ObserveHit, &a.entityActions);
         a.enemyTargets.Initialize(entities, a.entityActions, w.entitySimulation, e.entityPresence,
             p.playerCombatants, p.localHero, t.remotePlayerChannels, diagnostics_);
+        a.npcSimulation.Initialize(role, entities, w.authority, e.entityLifecycle, e.entityPresence,
+            p.playerCombatants, p.localHero, t.remotePlayerChannels, diagnostics_);
+        a.combatHits.SetAppliedHitObserver(&combat::NearestPlayerSimulationAssigner::ObserveAppliedHit, &a.npcSimulation);
         if (!w.worldSections.Initialize(
                 role, actorId, t.transport, diagnostics_,
                 sessionAuthorityEpoch))
@@ -160,6 +166,7 @@ namespace fable::multiplayer
         w.populationSimulation.Initialize(role, actorId, t.transport, w.authority, p.localHero, diagnostics_);
         e.entityMovement.Initialize(role, actorId, t.transport, w.authority, e.entityLifecycle, e.entityIdentities, locomotion, look, diagnostics_);
         a.entityActions.Initialize(role, actorId, t.transport, w.authority, e.entityLifecycle, e.entityIdentities, e.entityPresence, p.playerCombatants, a.combatLedger, combat, diagnostics_);
+        a.entityActions.SetAnimationService(&animation);
         a.playerActions.Initialize(role, actorId, t.transport, p.localHero, t.remotePlayerChannels, p.remotePlayers, e.entityIdentities, e.entityPresence, p.playerCombatants, a.combatLedger, combat, abilities, diagnostics_);
         a.combatHits.Initialize(role, actorId, t.transport, w.authority,
             e.entityLifecycle, e.entityIdentities, e.entityPresence,
@@ -299,7 +306,10 @@ namespace fable::multiplayer
             w.worldSections.Shutdown();
             w.cutsceneSync.Shutdown();
             a.enemyTargets.Shutdown();
+            a.combatHits.SetAppliedHitObserver(nullptr, nullptr);
+            a.npcSimulation.Shutdown();
             a.killExperience.Shutdown();
+            a.combatHits.SetHitObserver(nullptr, nullptr);
             w.chestSync.Shutdown();
             w.scriptTracer.Shutdown();
             w.hudMessageProbe.Shutdown();
@@ -310,6 +320,7 @@ namespace fable::multiplayer
             w.questState.Shutdown();
             e.entityLifecycle.Shutdown();
             e.entityIdentities.Clear();
+            entities::SetSimulationOwnerResolver(nullptr, nullptr);
             w.authority.Shutdown();
             a.combatLedger.Clear();
         }

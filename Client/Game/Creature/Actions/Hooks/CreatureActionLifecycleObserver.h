@@ -24,6 +24,15 @@ namespace fable::game::creature::actions
             void* context,
             void* creature,
             void* action);
+        // Called for a submission the authority gate denied on a fenced NPC.
+        // begin=true: return true to let it run as an owner-mirrored
+        // presentation (the callee may arm a clip selection); begin=false
+        // closes that scope after the native submit.
+        using PresentationGate = bool(*)(
+            void* context,
+            void* creature,
+            const char* actionType,
+            bool begin);
         using PostUpdateSink = void(*)(
             void* context,
             CreatureActionLifecycleObserver& observer,
@@ -41,6 +50,7 @@ namespace fable::game::creature::actions
         // AddEventSink/RemoveEventSink so action observation stays composable.
         void SetEventSink(EventSink sink, void* context) noexcept;
         void SetAuthorityGate(AuthorityGate gate, void* context) noexcept;
+        void SetPresentationGate(PresentationGate gate, void* context) noexcept;
         static void BeginAuthoritativeReplay() noexcept;
         static void EndAuthoritativeReplay() noexcept;
         // The retail ability wrapper returns void. A scoped receipt lets its
@@ -183,6 +193,8 @@ namespace fable::game::creature::actions
             postUpdateSinks_ = {};
         std::atomic<AuthorityGate> authorityGate_{nullptr};
         std::atomic<void*> authorityGateContext_{nullptr};
+        std::atomic<PresentationGate> presentationGate_{nullptr};
+        std::atomic<void*> presentationGateContext_{nullptr};
         mutable SRWLOCK authoritativeReplayLock_ = SRWLOCK_INIT;
         std::array<AuthoritativeReplayEntry, AuthoritativeReplayCapacity>
             authoritativeReplayActions_ = {};

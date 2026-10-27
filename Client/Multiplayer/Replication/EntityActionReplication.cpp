@@ -1,4 +1,5 @@
 #include "EntityActionReplication.h"
+#include "Game/Creature/Animation/CreatureAnimationService.h"
 #include "Game/Creature/Actions/Native/CreatureMotionActionFunctions.h"
 #include "Multiplayer/Runtime/MultiplayerSessionContexts.h"
 #include "Multiplayer/Transport/ReliableSinkDescriptorRegistry.h"
@@ -24,6 +25,21 @@
 
 namespace
 {
+    // NPC actions carry their resolved retail animation as "anim=<id>".
+    std::uint32_t ParseAnimationParameter(const std::string& parameter) noexcept
+    {
+        constexpr char Prefix[] = "anim=";
+        if (parameter.compare(0, sizeof(Prefix) - 1, Prefix) != 0) return 0;
+        unsigned long value = 0;
+        for (std::size_t i = sizeof(Prefix) - 1; i < parameter.size(); ++i)
+        {
+            const char c = parameter[i];
+            if (c < '0' || c > '9' || value > 0xFFFF) return 0;
+            value = value * 10 + static_cast<unsigned long>(c - '0');
+        }
+        return value <= 0xFFFF ? static_cast<std::uint32_t>(value) : 0;
+    }
+
     bool IsMapScopedAction(
         fable::multiplayer::protocol::EntityActionKind kind) noexcept
     {
@@ -158,6 +174,8 @@ namespace fable::multiplayer::replication
             observer_ = nullptr;
             return false;
         }
+        // Fenced NPCs mirror their owner's PlayAnimation through their own AI.
+        observer_->SetPresentationGate(&EntityActionReplication::PresentationGate, this);
         diagnostics_.Event(
             "MultiplayerEntityActionAttached",
             "bounded native creature-action queue is active");
@@ -373,7 +391,16 @@ namespace fable::multiplayer::replication
         }
         try
         {
-            engagements_[event.thingUid] = {event.creature, GetTickCount64()};
+            const std::uint64_t target = combatants_->FindActor(event.targetCreature);
+            EngagementRecord& record = engagements_[event.thingUid];
+            if (record.targetActorId != target)
+            {
+                char detail[128] = {};
+                std::snprintf(detail, sizeof(detail), "thing_uid=%016llX target_actor=%llu",
+                    static_cast<unsigned long long>(event.thingUid), static_cast<unsigned long long>(target));
+                diagnostics_.Event("MultiplayerEnemyEngaged", detail);
+            }
+            record = {event.creature, GetTickCount64(), target};
         }
         catch (...)
         {
@@ -387,15 +414,91 @@ namespace fable::multiplayer::replication
         std::vector<Engagement> engaged;
         for (auto iterator = engagements_.begin(); iterator != engagements_.end();)
         {
-            if (now - iterator->second.second > window)
+            if (now - iterator->second.at > window)
             {
                 iterator = engagements_.erase(iterator);
                 continue;
             }
-            engaged.push_back({iterator->first, iterator->second.first});
+            engaged.push_back({iterator->first, iterator->second.creature});
             ++iterator;
         }
         return engaged;
+    }
+
+    bool EntityActionReplication::PresentationGate(
+        void* const context, void* const creature, const char* const actionType, const bool begin)
+    {
+        auto* const self = static_cast<EntityActionReplication*>(context);
+        if (self == nullptr || creature == nullptr || actionType == nullptr) return false;
+        if (!begin)
+        {
+            if (self->animation_ != nullptr) self->animation_->EndReplicatedActionSelection();
+            return true;
+        }
+        if (std::strcmp(actionType, "CCreatureAction_PlayAnimation") != 0) return false;
+        std::uint32_t animationId = 0;
+        const std::uint64_t now = GetTickCount64();
+        AcquireSRWLockExclusive(&self->presentationLock_);
+        const auto found = self->ownerPresentations_.find(creature);
+        if (found != self->ownerPresentations_.end() && !found->second.started &&
+            now - found->second.receivedAt <= 2'000)
+        {
+            animationId = found->second.animationId;
+            found->second.started = true;
+        }
+        ReleaseSRWLockExclusive(&self->presentationLock_);
+        if (animationId == 0 || self->animation_ == nullptr) return false;
+        if (!self->animation_->BeginReplicatedActionSelection(creature, actionType, animationId)) return false;
+        const std::uint64_t started = ++self->presentationsStarted_;
+        if (started <= 20 || started % 100 == 0)
+        {
+            char detail[96] = {};
+            std::snprintf(detail, sizeof(detail), "count=%llu creature=%p animation_id=%u",
+                static_cast<unsigned long long>(started), creature, animationId);
+            self->diagnostics_.Event("MultiplayerEntityPresentationMirrored", detail);
+        }
+        return true;
+    }
+
+    void __cdecl EntityActionReplication::ObserveHit(
+        void* const context, const std::uint64_t sourceThingUid, const std::uint64_t targetThingUid)
+    {
+        auto* const self = static_cast<EntityActionReplication*>(context);
+        if (self == nullptr || self->combatants_ == nullptr || self->presence_ == nullptr ||
+            sourceThingUid == 0 || targetThingUid == 0)
+        {
+            return;
+        }
+        const std::uint64_t target = self->combatants_->FindActorByThingUid(targetThingUid);
+        if (target == 0 || self->combatants_->FindActorByThingUid(sourceThingUid) != 0) return;
+        const entities::LiveEntityRecord* const source = self->presence_->LiveEntities().Find(sourceThingUid);
+        if (source == nullptr || source->thing == nullptr || !source->creature) return;
+        try
+        {
+            EngagementRecord& record = self->engagements_[sourceThingUid];
+            if (record.targetActorId != target)
+            {
+                char detail[128] = {};
+                std::snprintf(detail, sizeof(detail), "thing_uid=%016llX target_actor=%llu source=hit",
+                    static_cast<unsigned long long>(sourceThingUid), static_cast<unsigned long long>(target));
+                self->diagnostics_.Event("MultiplayerEnemyEngaged", detail);
+            }
+            record = {source->thing, GetTickCount64(), target};
+        }
+        catch (...)
+        {
+        }
+    }
+
+    bool EntityActionReplication::IsAnyEngagedWith(
+        const std::uint64_t actorId, const std::uint64_t now, const std::uint64_t window) const
+    {
+        for (const auto& [uid, record] : engagements_)
+        {
+            (void)uid;
+            if (record.targetActorId == actorId && now - record.at <= window) return true;
+        }
+        return false;
     }
 
     bool EntityActionReplication::BeginLocalAction(
@@ -456,6 +559,7 @@ namespace fable::multiplayer::replication
             ? event.actionType
             : "UnknownNativeAction";
         active.nativeAction = event.action;
+        active.animationId = event.animationId;
         active.localOrigin = true;
         const std::uint64_t actionId = active.actionId;
         activeActions_.emplace(actionId, active);
@@ -846,7 +950,8 @@ namespace fable::multiplayer::replication
             LeasePriority(existingLease->kind) >= requiredPriority;
         const bool mapScoped = IsMapScopedAction(intent.kind) &&
             existingLease == nullptr &&
-            authority_->IsMapPublisher(
+            authority_->IsEntityPublisher(
+                {intent.entityUid, intent.entityGeneration},
                 intent.mapName, sourceActorId, intent.mapEpoch);
         if (borrowExistingLease)
         {
@@ -913,6 +1018,7 @@ namespace fable::multiplayer::replication
         active.abilityCharge = intent.abilityCharge;
         active.mapName = intent.mapName;
         active.semanticName = intent.semanticName;
+        active.animationId = ParseAnimationParameter(intent.parameter);
         active.nativeAbility = intent.semanticName == "CreatureAbility";
         active.combatEngagement = combatEngagement;
         active.ownsLease = !borrowExistingLease && !mapScoped;
@@ -1012,7 +1118,8 @@ namespace fable::multiplayer::replication
                     !active->second.ownsLease &&
                     IsMapScopedAction(active->second.kind) &&
                     active->second.actionEpoch == active->second.mapEpoch &&
-                    authority_->IsMapPublisher(
+                    authority_->IsEntityPublisher(
+                        {active->second.entityUid, active->second.entityGeneration},
                         active->second.mapName,
                         transportMessage.sourceActorId,
                         active->second.mapEpoch);
@@ -1077,7 +1184,8 @@ namespace fable::multiplayer::replication
                 !active->second.ownsLease &&
                 IsMapScopedAction(active->second.kind) &&
                 active->second.actionEpoch == active->second.mapEpoch &&
-                authority_->IsMapPublisher(
+                authority_->IsEntityPublisher(
+                    {active->second.entityUid, active->second.entityGeneration},
                     active->second.mapName,
                     transportMessage.sourceActorId,
                     active->second.mapEpoch);
@@ -1136,7 +1244,8 @@ namespace fable::multiplayer::replication
         {
             const bool mapScoped = IsMapScopedAction(message.kind) &&
                 message.actionEpoch == message.mapEpoch &&
-                authority_->IsMapPublisher(
+                authority_->IsEntityPublisher(
+                    {message.entityUid, message.entityGeneration},
                     message.mapName,
                     message.ownerActorId,
                     message.mapEpoch);
@@ -1144,11 +1253,40 @@ namespace fable::multiplayer::replication
                 lease->actorId == message.ownerActorId &&
                 lease->mapEpoch == message.mapEpoch &&
                 lease->actionEpoch == message.actionEpoch;
-            if (!mapScoped && !leaseScoped)
+            // The current map owner is authoritative for every NPC on its
+            // map. Its per-action lease travels on the authority stream and
+            // short AI actions (idle, attacks) routinely lose that race, so
+            // an action from the current map publisher for the current map
+            // epoch is accepted without waiting for the lease.
+            const bool mapOwnerAction = lease == nullptr &&
+                authority_->IsEntityPublisher(
+                    {message.entityUid, message.entityGeneration},
+                    message.mapName,
+                    message.ownerActorId,
+                    message.mapEpoch);
+            if (!mapScoped && !leaseScoped && !mapOwnerAction)
             {
-                diagnostics_.Event(
-                    "MultiplayerEntityActionStale",
-                    "action begin arrived without its ordered map or action authority fence");
+                const authority::MapAuthorityLease* const mapLease =
+                    authority_->FindMapLease(message.mapName);
+                char detail[384] = {};
+                std::snprintf(
+                    detail,
+                    sizeof(detail),
+                    "action begin arrived without its ordered map or action authority fence: thing_uid=%016llX kind=%u semantic=%s owner=%llu map=%s msg_map_epoch=%u msg_action_epoch=%u local_map_owner=%llu local_map_epoch=%u action_lease=%s lease_owner=%llu lease_map_epoch=%u lease_action_epoch=%u",
+                    static_cast<unsigned long long>(message.entityUid),
+                    static_cast<unsigned>(message.kind),
+                    message.semanticName.c_str(),
+                    static_cast<unsigned long long>(message.ownerActorId),
+                    message.mapName.c_str(),
+                    message.mapEpoch,
+                    message.actionEpoch,
+                    static_cast<unsigned long long>(mapLease != nullptr ? mapLease->actorId : 0),
+                    mapLease != nullptr ? mapLease->epoch : 0u,
+                    lease != nullptr ? "yes" : "no",
+                    static_cast<unsigned long long>(lease != nullptr ? lease->actorId : 0),
+                    lease != nullptr ? lease->mapEpoch : 0u,
+                    lease != nullptr ? lease->actionEpoch : 0u);
+                diagnostics_.Event("MultiplayerEntityActionStale", detail);
                 return true;
             }
             TrackCombatAction(message);
@@ -1202,6 +1340,7 @@ namespace fable::multiplayer::replication
             active.abilityCharge = message.abilityCharge;
             active.mapName = message.mapName;
             active.semanticName = message.semanticName;
+            active.animationId = ParseAnimationParameter(message.parameter);
             active.nativeAbility =
                 message.semanticName == "CreatureAbility";
             active.localOrigin = localOrigin;
@@ -1277,7 +1416,8 @@ namespace fable::multiplayer::replication
                 !active->second.ownsLease &&
                 IsMapScopedAction(active->second.kind) &&
                 active->second.actionEpoch == active->second.mapEpoch &&
-                authority_->IsMapPublisher(
+                authority_->IsEntityPublisher(
+                    {active->second.entityUid, active->second.entityGeneration},
                     active->second.mapName,
                     message.ownerActorId,
                     active->second.mapEpoch);
@@ -1431,6 +1571,45 @@ namespace fable::multiplayer::replication
     bool EntityActionReplication::ReplayAuthoritativeNativeAction(
         ActiveAction& action)
     {
+        // One-shot owner attack clips (Fodder attacks and similar) play
+        // directly on the fenced copy; looping PlayAnimation goes through
+        // PresentationGate below so the native action advances it.
+        if (action.animationId != 0 && !action.animationReplayed && !action.nativeAbility &&
+            action.ownerActorId != localActorId_ && animation_ != nullptr && presence_ != nullptr &&
+            action.semanticName != "CCreatureAction_PlayAnimation" &&
+            action.semanticName != "CCreatureAction_FodderIdle" &&
+            action.semanticName != "CCreatureAction_UseObject" &&
+            action.semanticName != "CCreatureAction_InterruptableMidAttack" &&
+            action.semanticName.rfind("CCombatAction_", 0) != 0)
+        {
+            action.animationReplayed = true;
+            const entities::LiveEntityRecord* const live = presence_->LiveEntities().Find(action.entityUid);
+            if (live != nullptr && live->thing != nullptr && live->creature)
+            {
+                (void)animation_->PlayAuthoritative(live->thing, action.animationId);
+            }
+        }
+        // Owner PlayAnimation on a fenced NPC: its own AI keeps proposing
+        // PlayAnimation; PresentationGate lets the next one run with this clip
+        // so the native action plays and updates normally.
+        if (action.animationId != 0 && !action.animationReplayed && !action.nativeAbility &&
+            action.ownerActorId != localActorId_ && presence_ != nullptr &&
+            action.semanticName == "CCreatureAction_PlayAnimation")
+        {
+            action.animationReplayed = true;
+            const entities::LiveEntityRecord* const live = presence_->LiveEntities().Find(action.entityUid);
+            if (live != nullptr && live->thing != nullptr && live->creature)
+            {
+                AcquireSRWLockExclusive(&presentationLock_);
+                OwnerPresentation& presentation = ownerPresentations_[live->thing];
+                if (presentation.animationId != action.animationId || presentation.started)
+                {
+                    presentation = {action.animationId, GetTickCount64(), false};
+                }
+                presentation.receivedAt = GetTickCount64();
+                ReleaseSRWLockExclusive(&presentationLock_);
+            }
+        }
         if (!action.nativeAbility && action.ownerActorId != localActorId_ &&
             !action.nativeReplayed && !action.nativeReplayFailed &&
             action.semanticName == "CCreatureAction_UseObject")
@@ -1794,7 +1973,8 @@ namespace fable::multiplayer::replication
                 authority_->FindActionLease(key);
             const bool mapScoped = IsMapScopedAction(action.kind) &&
                 action.actionEpoch == action.mapEpoch &&
-                authority_->IsMapPublisher(
+                authority_->IsEntityPublisher(
+                    {action.entityUid, action.entityGeneration},
                     action.mapName,
                     action.ownerActorId,
                     action.mapEpoch);
@@ -1849,6 +2029,10 @@ namespace fable::multiplayer::replication
         message.abilityCharge = action.abilityCharge;
         message.mapName = action.mapName;
         message.semanticName = action.semanticName;
+        if (action.animationId != 0)
+        {
+            message.parameter = "anim=" + std::to_string(action.animationId);
+        }
         return message;
     }
 
@@ -1993,6 +2177,7 @@ namespace fable::multiplayer::replication
         }
         if (observer_ != nullptr)
         {
+            observer_->SetPresentationGate(nullptr, nullptr);
             observer_->RemoveEventSink(
                 &EntityActionReplication::CaptureEvent, this);
         }
@@ -2004,6 +2189,9 @@ namespace fable::multiplayer::replication
         }
         pendingMessages_.clear();
         activeActions_.clear();
+        AcquireSRWLockExclusive(&presentationLock_);
+        ownerPresentations_.clear();
+        ReleaseSRWLockExclusive(&presentationLock_);
         localActionIds_.clear();
         combatActionIds_.clear();
         recentAbilityActions_.clear();

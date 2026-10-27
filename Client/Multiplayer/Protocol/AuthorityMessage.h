@@ -27,6 +27,10 @@ namespace fable::multiplayer::protocol
     {
         MapSimulation = 1,
         EntityAction = 2,
+        // Host-assigned per-NPC simulation owner inside a map lease (the
+        // nearest player, or a ranged attacker). actionEpoch carries the
+        // host's monotonically increasing assignment epoch.
+        EntitySimulation = 3,
     };
 
     enum class ActionLeaseKind : std::uint8_t

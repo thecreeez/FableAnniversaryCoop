@@ -240,6 +240,7 @@ namespace fable::multiplayer
         if (!actions.combatHits.Process()) diagnostics.Event("ClientFailed", "multiplayer-combat-hit-replication");
         if (!actions.playerDeath.Process(localHero)) diagnostics.Event("ClientFailed", "multiplayer-player-death");
         actions.enemyTargets.Process();
+        actions.npcSimulation.Process();
         if (!actions.killExperience.Process()) diagnostics.Event("ClientFailed", "multiplayer-kill-experience");
         if (!actions.entityVitals.Process(localHero, entityPresence.LiveEntities(), remotePlayers)) diagnostics.Event("ClientFailed", "multiplayer-entity-vitals-replication");
         return false;

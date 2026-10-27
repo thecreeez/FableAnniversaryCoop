@@ -5,6 +5,7 @@
 #include "Multiplayer/Transport/ReliableSinkDescriptorRegistry.h"
 #include "Multiplayer/Transport/UdpPeer.h"
 
+#include <algorithm>
 #include <Windows.h>
 #include <array>
 #include <cstdio>
@@ -16,6 +17,14 @@ namespace
         fable::multiplayer::MultiplayerSessionContexts& contexts) noexcept
     {
         return &contexts.world.questFields;
+    }
+
+    // Per-player engine bookkeeping, not story state: GameflowAssistance is
+    // the combat-assist script whose frame counters tick every frame on each
+    // client. Syncing them made both peers echo updates ~10 times a second.
+    bool IsLocalOnlyField(const std::string& quest, const std::string& field) noexcept
+    {
+        return quest == "GameflowAssistance" || field.find("FramesSince") != std::string::npos;
     }
 
     bool SyncDisabledForTest() noexcept
@@ -90,6 +99,9 @@ namespace fable::multiplayer::persistence
         const std::uint32_t generation = questEvents_ != nullptr
             ? questEvents_->Hook().Generation() : 0;
         const bool mapped = recorder_.Record(fields_);
+        fields_.erase(std::remove_if(fields_.begin(), fields_.end(),
+            [](const QuestFieldRecorder::Field& field) { return IsLocalOnlyField(field.quest, field.name); }),
+            fields_.end());
         if (mapped)
         {
             mappedGeneration_ = generation;

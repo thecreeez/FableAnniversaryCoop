@@ -182,6 +182,7 @@ namespace fable::automation::runtime
             hostCutscene || guestCutscene,
             hostCutscene,
             services.Entities(),
+            services.Players(),
             multiplayer,
             diagnostics);
         return true;

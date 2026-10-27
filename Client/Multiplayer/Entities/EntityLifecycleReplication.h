@@ -72,6 +72,11 @@ namespace fable::multiplayer::entities
     private:
         static constexpr std::size_t PendingMessageCapacity = 32768;
 
+        bool SweepOwnedRoster(
+            const LiveEntityRegistry& liveEntities,
+            const std::string& localMap,
+            std::uint16_t localMapId,
+            std::uint32_t mapEpoch);
         bool ObserveLocalChange(
             const LiveEntityChange& change,
             const std::string& localMap,
@@ -119,6 +124,11 @@ namespace fable::multiplayer::entities
         std::uint32_t lastOwnedMapEpoch_ = 0;
         std::uint16_t lastOwnedMapId_ = 0;
         bool lastOwnedRosterReady_ = false;
+        // Owner roster sweep: once a second every live NPC on the owned map
+        // without a live canonical record is published like a fresh spawn,
+        // so story spawns and missed load-time registrations always catch up.
+        static constexpr std::uint64_t RosterSweepMilliseconds = 1'000;
+        std::uint64_t nextRosterSweepAt_ = 0;
         std::deque<protocol::EntityLifecycleMessage> pending_;
         std::unordered_map<
             std::uint64_t,

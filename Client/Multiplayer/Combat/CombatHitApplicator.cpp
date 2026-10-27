@@ -119,7 +119,7 @@ namespace fable::multiplayer::combat
             world->creature &&
             world->generation == result.targetGeneration &&
             world->mapEpoch == result.targetMapEpoch &&
-            world->simulationOwnerActorId == localActorId_;
+            entities::SimulationOwnerOf(*world) == localActorId_;
     }
 
     bool CombatHitApplicator::ObserveNativeHit(
@@ -493,6 +493,10 @@ namespace fable::multiplayer::combat
             terminal ? "true" : "false",
             result.reactionFlags);
         diagnostics_.Event("MultiplayerCombatHitApplied", detail);
+        if (appliedHitObserver_ != nullptr)
+        {
+            appliedHitObserver_(appliedHitObserverContext_, result);
+        }
         return true;
     }
 

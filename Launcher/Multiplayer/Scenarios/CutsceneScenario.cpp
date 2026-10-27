@@ -41,12 +41,26 @@ namespace fable::launcher::multiplayer
             peers.WaitEventDetail(host, "CutsceneModeRestored", "sequence=begun") &&
             peers.WaitEvent(host, "CutsceneStartReturned") &&
             peers.WaitEvent(guest, "CutsceneStartReturned");
-        const bool noDriverFailure = played &&
+        // Enemies attack every player, with the players far apart: the wasp
+        // hits the host, then (moved to the guest) the guest, whose own game
+        // loses health, then the host again after the players swap.
+        const bool enemies = played &&
+            peers.WaitEvent(host, "CutsceneAcceptanceCutsceneOver") &&
+            peers.WaitEvent(host, "EnemyTestHostNearWasp") &&
+            peers.WaitEventDetail(host, "EnemyTestWaspAttacked", "target=host ") &&
+            peers.WaitEvent(host, "EnemyTestHostToGuestSpot") &&
+            peers.WaitEvent(guest, "EnemyTestGuestNearWasp") &&
+            peers.WaitEventDetail(host, "EnemyTestWaspAttacked", "target=guest") &&
+            peers.WaitEvent(guest, "EnemyTestGuestHurt") &&
+            peers.WaitEvent(guest, "EnemyTestGuestMovedToHost") &&
+            peers.WaitEvent(host, "EnemyTestHostBackToWasp") &&
+            peers.WaitEventDetail(host, "EnemyTestWaspAttacked", "target=host-again");
+        const bool noDriverFailure = enemies &&
             !diagnostics::EventWasReported(diagnostics::ReadEventFile(host.events), "CutsceneAcceptanceFailed") &&
             !diagnostics::EventWasReported(diagnostics::ReadEventFile(guest.events), "CutsceneAcceptanceFailed");
         const bool responsive = noDriverFailure && peers.IsResponsive(host) && peers.IsResponsive(guest);
         const bool stopped = session.Shutdown();
-        if (!connected || !held || !cancelled || !notPlayedEarly || !played || !noDriverFailure || !responsive || !stopped)
+        if (!connected || !held || !cancelled || !notPlayedEarly || !played || !enemies || !noDriverFailure || !responsive || !stopped)
         {
             std::wcerr
                 << L"Multiplayer cutscene acceptance failed: "
@@ -55,6 +69,7 @@ namespace fable::launcher::multiplayer
                     : !cancelled ? L"dismissing the waiting box did not cancel and move the host back"
                     : !notPlayedEarly ? L"the cutscene played before everyone gathered"
                     : !played ? L"the gathered cutscene did not play on both peers"
+                    : !enemies ? L"a wasp did not attack the host, then the guest, then the host again"
                     : !noDriverFailure ? L"the acceptance driver reported a failure"
                     : !responsive ? L"a peer stopped responding"
                     : L"shutdown was not clean")
@@ -62,7 +77,7 @@ namespace fable::launcher::multiplayer
             return 1;
         }
         std::wcout
-            << L"Multiplayer cutscene acceptance passed: the host's quest cutscene was held for gathering; dismissing the waiting box ended the scripted sequence and moved the host back; once both players gathered the sequence was restored and the cutscene played on both peers.\n"
+            << L"Multiplayer cutscene acceptance passed: the host's quest cutscene was held for gathering; dismissing the waiting box ended the scripted sequence and moved the host back; once both players gathered the sequence was restored and the cutscene played on both peers; a wasp attacked the host, then the guest (who lost health in its own game), then the host again, with the players far apart.\n"
             << L"State root: " << session.context().sessionRoot.wstring() << L"\n";
         return 0;
     }
