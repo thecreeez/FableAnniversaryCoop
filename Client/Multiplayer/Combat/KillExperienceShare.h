@@ -45,6 +45,8 @@ namespace fable::multiplayer::combat
         // Game thread.
         bool Process();
         bool HandleReliableMessage(const TransportMessage& message) override;
+        // Acceptance seam: treat amount as a local kill grant.
+        void InjectKillForTest(std::int32_t amount);
 
     private:
         static constexpr float PeerShare = 0.3f;

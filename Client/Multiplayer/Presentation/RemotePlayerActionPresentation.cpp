@@ -457,6 +457,14 @@ namespace fable::multiplayer::presentation
                         message.ownerActorId,
                         message.kind == PlayerActionKind::Roll,
                         message.motion);
+                    if (accepted)
+                    {
+                        char motionDetail[96] = {};
+                        std::snprintf(motionDetail, sizeof(motionDetail), "kind=%s owner=%llu",
+                            message.kind == PlayerActionKind::Roll ? "roll" : "block",
+                            static_cast<unsigned long long>(message.ownerActorId));
+                        diagnostics_.Event("MultiplayerRemoteMotionPerformed", motionDetail);
+                    }
                     break;
                 case PlayerActionKind::AbilityRequest:
                 case PlayerActionKind::RangedAim:

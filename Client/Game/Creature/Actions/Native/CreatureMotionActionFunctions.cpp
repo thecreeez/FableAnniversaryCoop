@@ -58,7 +58,8 @@ namespace
     // Constructs with `construct`, submits as an authoritative replay, then
     // destroys the stack copy (the creature keeps its own).
     template <typename Construct>
-    bool SubmitConstructed(const HMODULE gameModule, void* const creature, Construct construct) noexcept
+    bool SubmitConstructed(const HMODULE gameModule, void* const creature, Construct construct,
+        const bool authoritativeReplay = true) noexcept
     {
         using fable::game::creature::actions::CreatureActionLifecycleObserver;
         using fable::game::creature::actions::native::CreatureActionFunctions;
@@ -70,7 +71,7 @@ namespace
         bool constructed = false;
         bool submitted = false;
         bool receiptArmed = false;
-        CreatureActionLifecycleObserver::BeginAuthoritativeReplay();
+        if (authoritativeReplay) CreatureActionLifecycleObserver::BeginAuthoritativeReplay();
         __try
         {
             construct(action);
@@ -82,7 +83,7 @@ namespace
         {
             submitted = false;
         }
-        CreatureActionLifecycleObserver::EndAuthoritativeReplay();
+        if (authoritativeReplay) CreatureActionLifecycleObserver::EndAuthoritativeReplay();
         bool accepted = false;
         const bool observed = receiptArmed && CreatureActionLifecycleObserver::EndSubmissionReceipt(creature, accepted);
         if (constructed)
@@ -101,13 +102,15 @@ namespace
 
 namespace fable::game::creature::actions::native
 {
-    bool CreatureMotionActionFunctions::SubmitStartBlocking(const HMODULE gameModule, void* const creature) noexcept
+    bool CreatureMotionActionFunctions::SubmitStartBlocking(
+        const HMODULE gameModule, void* const creature, const bool authoritativeReplay) noexcept
     {
         if (gameModule == nullptr || creature == nullptr) return false;
         const auto base = reinterpret_cast<std::uintptr_t>(gameModule);
         if (!HasSehPrologue(base + StartBlockingConstructorRva)) return false;
         const auto construct = reinterpret_cast<StartBlockingConstructor>(base + StartBlockingConstructorRva);
-        return SubmitConstructed(gameModule, creature, [&](void* action) { construct(action, creature); });
+        return SubmitConstructed(gameModule, creature, [&](void* action) { construct(action, creature); },
+            authoritativeReplay);
     }
 
     bool CreatureMotionActionFunctions::SubmitUseObject(
@@ -124,7 +127,8 @@ namespace fable::game::creature::actions::native
         const HMODULE gameModule,
         void* const creature,
         const float (&direction)[3],
-        const float (&stick)[2]) noexcept
+        const float (&stick)[2],
+        const bool authoritativeReplay) noexcept
     {
         if (gameModule == nullptr || creature == nullptr) return false;
         for (const float value : direction)
@@ -139,7 +143,8 @@ namespace fable::game::creature::actions::native
         if (!HasSehPrologue(base + StrafeJumpConstructorRva)) return false;
         const auto construct = reinterpret_cast<StrafeJumpConstructor>(base + StrafeJumpConstructorRva);
         return SubmitConstructed(gameModule, creature,
-            [&](void* action) { construct(action, creature, nullptr, direction, stick); });
+            [&](void* action) { construct(action, creature, nullptr, direction, stick); },
+            authoritativeReplay);
     }
 
     bool CreatureMotionActionFunctions::ReadStrafeJump(

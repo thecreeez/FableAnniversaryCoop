@@ -161,6 +161,12 @@ namespace fable::multiplayer::combat
         if (earned && outbound_.size() < QueueLimit) outbound_.push_back(grant);
     }
 
+    void KillExperienceShare::InjectKillForTest(const std::int32_t amount)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (amount > 0 && localKills_.size() < QueueLimit) localKills_.push_back(amount);
+    }
+
     bool KillExperienceShare::Process()
     {
         if (transport_ == nullptr || original_ == nullptr) return true;

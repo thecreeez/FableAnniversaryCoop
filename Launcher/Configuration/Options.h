@@ -41,6 +41,7 @@ struct Options
     bool multiplayerMapStressTest = false;
     bool multiplayerSaveTest = false;
     bool multiplayerQuestTest = false;
+    bool multiplayerFeatureTest = false;
     bool multiplayerAuthorityTest = false;
     bool multiplayerCombatTest = false;
     bool multiplayerHeroWillTest = false;

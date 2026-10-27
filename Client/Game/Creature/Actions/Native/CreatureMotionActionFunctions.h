@@ -27,13 +27,16 @@ namespace fable::game::creature::actions::native
         // and using a bench, chair or similar object (sitting included).
         static constexpr std::uintptr_t UseObjectConstructorRva = 0x017F83D0;
 
-        static bool SubmitStartBlocking(HMODULE gameModule, void* creature) noexcept;
+        // authoritativeReplay=false submits like gameplay (the local capture
+        // then sees it); replays on remote presentations keep true.
+        static bool SubmitStartBlocking(HMODULE gameModule, void* creature, bool authoritativeReplay = true) noexcept;
         static bool SubmitUseObject(HMODULE gameModule, void* creature, void* target) noexcept;
         static bool SubmitStrafeJump(
             HMODULE gameModule,
             void* creature,
             const float (&direction)[3],
-            const float (&stick)[2]) noexcept;
+            const float (&stick)[2],
+            bool authoritativeReplay = true) noexcept;
         // Reads the roll parameters from an accepted local action.
         static bool ReadStrafeJump(
             HMODULE gameModule,
