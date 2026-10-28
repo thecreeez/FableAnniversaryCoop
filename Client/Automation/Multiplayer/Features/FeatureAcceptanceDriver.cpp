@@ -1,3 +1,4 @@
+#include "Game/HeroPawn/Equipment/Native/HeroWeaponComponent.h"
 #include "FeatureAcceptanceDriver.h"
 
 #include "Game/Creature/Actions/Native/CreatureMotionActionFunctions.h"
@@ -18,6 +19,25 @@ namespace
     constexpr std::size_t QuestCardSlot = 325;
     // Any quest the fixture knows; the card is only presented.
     constexpr const char* QuestCardName = "Q_Arena";
+
+    bool WakeCombatStance(void* hero) noexcept
+    {
+        using namespace fable::game::entity::native;
+        void* combat = ThingComponentAccess::Find(hero, static_cast<ThingComponentType>(0x30));
+        const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+        const auto address = base + 0x01958B40;
+        if (combat == nullptr) return false;
+        __try
+        {
+            const auto* bytes = reinterpret_cast<const unsigned char*>(address);
+            if (bytes[0] != 0xA1 || *reinterpret_cast<const std::uintptr_t*>(bytes + 1) != base + 0x0322C75C ||
+                bytes[5] != 0x89 || bytes[6] != 0x41 || bytes[7] != 0x1C) return false;
+            // Retail Combat::Wake timer, ret4; called by GameObject::vf71.
+            reinterpret_cast<void(__thiscall*)(void*, void*)>(address)(combat, nullptr);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        return fable::game::hero_pawn::equipment::native::HeroWeaponComponent::ReadCombatStance(hero);
+    }
 
     bool AddStrength(void* const experience, const std::int32_t amount) noexcept
     {
@@ -166,9 +186,14 @@ namespace fable::automation::multiplayer::features
             const bool blocked = CreatureMotionActionFunctions::SubmitStartBlocking(module, hero, false);
             std::snprintf(detail, sizeof(detail), "accepted=%d", blocked ? 1 : 0);
             diagnostics_.Event("FeatureHostBlocked", detail);
-            Enter(Phase::StatExperience, now);
+            Enter(Phase::CombatStance, now);
             return true;
         }
+        case Phase::CombatStance:
+            if (!WakeCombatStance(hero)) { Fail("native-combat-stance-not-active"); return false; }
+            diagnostics_.Event("FeatureHostCombatStance", "native combat idle active");
+            Enter(Phase::StatExperience, now);
+            return true;
         case Phase::StatExperience:
         {
             void* const experience = game::entity::native::ThingComponentAccess::Find(
@@ -176,7 +201,16 @@ namespace fable::automation::multiplayer::features
             const bool added = experience != nullptr && AddStrength(experience, ExperienceAmount);
             std::snprintf(detail, sizeof(detail), "strength=%d added=%d", ExperienceAmount, added ? 1 : 0);
             diagnostics_.Event("FeatureHostStatExperience", detail);
-            Enter(Phase::KillExperience, now);
+            Enter(Phase::SmallExperience, now);
+            return true;
+        }
+        case Phase::SmallExperience:
+        {
+            void* experience = game::entity::native::ThingComponentAccess::Find(hero,
+                static_cast<game::entity::native::ThingComponentType>(HeroExperienceComponent));
+            if (experience == nullptr || !AddStrength(experience, 1)) { Fail("small-experience-award-failed"); return false; }
+            ++smallAwards_;
+            Enter(smallAwards_ >= 4 ? Phase::KillExperience : Phase::SmallExperience, now);
             return true;
         }
         case Phase::KillExperience:

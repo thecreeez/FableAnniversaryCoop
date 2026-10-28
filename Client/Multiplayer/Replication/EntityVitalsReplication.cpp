@@ -346,7 +346,7 @@ namespace fable::multiplayer::replication
             {
                 AppliedEntity& applied = appliedEntities_[world->thingUid];
                 if (applied.creature != local.thing ||
-                    applied.revision != retainedVitals->second.revision)
+                    applied.revision != retainedVitals->second.revision || applied.bindingIncarnation != local.localIncarnation)
                 {
                     if (!combat_->ApplyAuthoritativeCombatHealth(
                             local.thing,
@@ -355,6 +355,7 @@ namespace fable::multiplayer::replication
                     {
                         continue;
                     }
+                    applied.bindingIncarnation = local.localIncarnation;
                     applied.creature = local.thing;
                     applied.revision = retainedVitals->second.revision;
                     char detail[320] = {};
@@ -636,14 +637,17 @@ namespace fable::multiplayer::replication
         // canonical entity generation, not to one CTCMapwho incarnation, so a
         // guest may retain the last source-map value while that entity is
         // dormant or already fenced into its destination map.
-        if (world == nullptr || !world->available ||
-            world->generation != message.entityGeneration)
+        if (world != nullptr && (!world->available || world->generation > message.entityGeneration)) return true;
+        if (world == nullptr || world->generation < message.entityGeneration)
         {
-            return true;
+            if (latestEntities_.size() >= 8192 && latestEntities_.count(message.entityUid) == 0) return false;
+            awaitingEntityIdentityAt_.try_emplace(message.entityUid, GetTickCount64());
         }
         const auto existing = latestEntities_.find(message.entityUid);
         if (existing == latestEntities_.end() ||
-            IsNewer(message.revision, existing->second.revision))
+            message.entityGeneration > existing->second.entityGeneration ||
+            (message.entityGeneration == existing->second.entityGeneration &&
+                IsNewer(message.revision, existing->second.revision)))
         {
             latestEntities_[message.entityUid] = message;
         }
@@ -1090,20 +1094,26 @@ namespace fable::multiplayer::replication
                 lifecycle_->Directory().Find(entityUid);
             const entities::LiveEntityRecord* const live =
                 liveEntities.Find(entityUid);
-            if (world == nullptr || !world->available ||
-                world->generation != message.entityGeneration)
+            if (world == nullptr || world->generation < message.entityGeneration)
+            {
+                const auto pending = awaitingEntityIdentityAt_.try_emplace(entityUid, GetTickCount64()).first;
+                if (GetTickCount64() - pending->second >= 10000) stale.push_back(entityUid);
+                continue;
+            }
+            awaitingEntityIdentityAt_.erase(entityUid);
+            if (!world->available || world->generation != message.entityGeneration)
             {
                 stale.push_back(entityUid);
                 continue;
             }
             if (!world->live || live == nullptr || live->thing == nullptr ||
-                message.ownerActorId == localActorId_)
+                entities::SimulationOwnerOf(*world) == localActorId_)
             {
                 continue;
             }
             AppliedEntity& applied = appliedEntities_[entityUid];
             if (applied.creature == live->thing &&
-                applied.revision == message.revision)
+                applied.revision == message.revision && applied.bindingIncarnation == live->localIncarnation)
             {
                 continue;
             }
@@ -1112,6 +1122,7 @@ namespace fable::multiplayer::replication
                     message.currentHealth,
                     message.maximumHealth))
             {
+                applied.bindingIncarnation = live->localIncarnation;
                 applied.creature = live->thing;
                 applied.revision = message.revision;
                 char detail[320] = {};
@@ -1133,6 +1144,7 @@ namespace fable::multiplayer::replication
         for (const std::uint64_t entityUid : stale)
         {
             latestEntities_.erase(entityUid);
+            awaitingEntityIdentityAt_.erase(entityUid);
             appliedEntities_.erase(entityUid);
             hostEntityRevisions_.erase(entityUid);
         }
@@ -1212,6 +1224,7 @@ namespace fable::multiplayer::replication
         latestPlayers_.clear();
         latestPlayerConnectionNonces_.clear();
         latestEntities_.clear();
+        awaitingEntityIdentityAt_.clear();
         hostPlayerRevisions_.clear();
         hostEntityRevisions_.clear();
         appliedEntities_.clear();

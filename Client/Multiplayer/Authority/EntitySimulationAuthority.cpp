@@ -1,3 +1,4 @@
+#include "Game/Creature/Control/ScriptControl.h"
 #include "EntitySimulationAuthority.h"
 
 #include "Game/Creature/Actions/Hooks/CreatureActionLifecycleObserver.h"
@@ -259,30 +260,14 @@ namespace fable::multiplayer::authority
             }
             else
             {
-                canSimulate = ownerRosterReady ||
-                    record->mapName != localMap;
-                if (canSimulate)
-                {
-                    canSimulate = authority_->IsEntityPublisher(
-                        {record->thingUid, record->generation},
-                        record->mapName,
-                        localActorId_,
-                        record->mapEpoch);
-                }
-                // The map owner's fallback never takes an NPC the host
-                // assigned to another player (nearest player / ranged aggro).
-                const std::uint64_t assignedOwner = authority_->EntitySimulationOwner(
-                    {record->thingUid, record->generation}, record->mapName, record->mapEpoch);
-                if (!canSimulate && ownsLiveMap &&
-                    (assignedOwner == 0 || assignedOwner == localActorId_))
-                {
-                    canSimulate = true;
-                    ++ownedMapFallback;
-                }
-                else if (!canSimulate)
-                {
-                    ++fencedNotPublisher;
-                }
+                authority_->ObserveReadyEntity({record->thingUid, record->generation},
+                    record->mapName, record->mapEpoch);
+                // A bound canonical incarnation has its own fenced lease.
+                // An unrelated pending spawn must not stop its AI or attacks.
+                canSimulate = authority_->IsEntityPublisher(
+                    {record->thingUid, record->generation},
+                    record->mapName, localActorId_, record->mapEpoch);
+                if (!canSimulate) ++fencedNotPublisher;
             }
             std::uint64_t nativeUid = identities_->FindLocal(canonicalUid);
             if (nativeUid == 0)
@@ -397,7 +382,7 @@ namespace fable::multiplayer::authority
         // impact effects immediately. Health remains protected and the
         // reliable CombatHit result suppresses duplicate replay after it
         // correlates this native response.
-        if (IsVictimPresentationAction(action))
+        if (game::ScriptControl::HasNativeControl(creature) || IsVictimPresentationAction(action))
         {
             return true;
         }

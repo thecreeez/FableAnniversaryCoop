@@ -52,6 +52,11 @@ namespace
         {
             return false;
         }
+        if (message.scope == AuthorityScope::EntitySimulation &&
+            (message.operation == AuthorityOperation::Prepare || message.operation == AuthorityOperation::Prepared))
+            return message.actionKind == ActionLeaseKind::None && message.ownerActorId != 0 &&
+                message.entityUid != 0 && message.entityGeneration != 0 && message.mapEpoch != 0 &&
+                message.actionEpoch != 0 && message.mapId == 0 && message.mapBaselineRevision == 0;
         if (message.operation == AuthorityOperation::Request ||
             message.operation == AuthorityOperation::Prepare)
         {

@@ -178,6 +178,11 @@ namespace fable::multiplayer::presentation
 
 namespace fable::game::creature::actions::native
 {
+    bool CreatureMotionActionFunctions::ReadBlocking(void*, bool&) noexcept
+    {
+        return false;
+    }
+
     bool CreatureMotionActionFunctions::ReadStrafeJump(
         HMODULE, void*, float (&)[3], float (&)[2]) noexcept
     {

@@ -82,6 +82,7 @@ namespace fable::game::creature::combat
             bool knockdown,
             std::uint32_t resolvedAnimationId) noexcept;
         bool SubmitReplicatedDeath(void* creature) noexcept;
+        bool ConsumeNativeResurrectionFlask(void* creature) noexcept;
         // Submits a new locally-authoritative creature attack through Fable's
         // normal action boundary. Unlike replicated replay, this is observed
         // and published by the entity-action replication layer.

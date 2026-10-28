@@ -35,6 +35,9 @@ namespace fable::game::hero_pawn::equipment::native
     class HeroWeaponComponent final
     {
     public:
+        static bool ReadCombatStance(void* creature) noexcept;
+        static bool SetRemoteCombatStance(void* creature, bool active) noexcept;
+        static void ClearRemoteCombatStance(void* creature) noexcept;
         static constexpr std::uintptr_t ExpectedVtableRva = 0x02B04D84;
 
         [[nodiscard]] static bool Capture(

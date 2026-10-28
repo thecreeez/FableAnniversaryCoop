@@ -1,3 +1,4 @@
+#include "Game/Creature/Control/ScriptControl.h"
 #include "EntityMovementReplication.h"
 
 #include "Game/Creature/Locomotion/CreatureLocomotionService.h"
@@ -121,7 +122,8 @@ namespace fable::multiplayer::movement
         const entities::LiveEntityRegistry& liveEntities,
         const std::string& localMap,
         bool ownerRosterReady,
-        const std::uint64_t observerReadinessRevision)
+        const std::uint64_t observerReadinessRevision,
+        const bool cinematicActive)
     {
         if (!initialized_.load(std::memory_order_acquire) ||
             transport_ == nullptr || authority_ == nullptr ||
@@ -130,18 +132,15 @@ namespace fable::multiplayer::movement
             return false;
         }
 
+        cinematicActive_.store(cinematicActive, std::memory_order_release);
         const authority::MapAuthorityLease* const lease =
             authority_->FindMapLease(localMap);
-        const bool ownsMap = lease != nullptr && !localMap.empty() &&
-            lease->actorId == localActorId_ && lease->epoch != 0;
         const std::uint32_t mapEpoch = lease != nullptr ? lease->epoch : 0;
-        const bool ownsEntityAction = lease != nullptr &&
-            authority_->HasEntityActionPublisher(
-                localMap,
-                localActorId_,
-                mapEpoch);
-        const bool canPublish = ownerRosterReady &&
-            (ownsMap || ownsEntityAction);
+        // Capture admission is map-scoped; every captured NPC is fenced by
+        // its own canonical incarnation and publisher lease below. A guest
+        // entity owner need not own the entire map or an action override.
+        const bool canPublish = lease != nullptr && mapEpoch != 0 && !localMap.empty();
+        (void)ownerRosterReady;
         if (!canPublish || ownedMap_ != localMap ||
             ownedMapEpoch_ != mapEpoch)
         {
@@ -241,7 +240,9 @@ namespace fable::multiplayer::movement
         ReplicatedActorMovement::NativeInput& input)
     {
         auto* const playback = static_cast<Playback*>(context);
-        return playback != nullptr &&
+        return playback != nullptr && playback->replication != nullptr &&
+            !(playback->replication->cinematicActive_.load(std::memory_order_acquire) &&
+                game::ScriptControl::HasNativeControl(creature)) &&
             playback->movement.Provide(creature, input);
     }
 
@@ -435,7 +436,9 @@ namespace fable::multiplayer::movement
             LocalPublishState& state = localStates_[canonicalUid];
             if (!state.hasPrevious ||
                 state.current.entityGeneration != world->generation ||
-                state.current.mapEpoch != mapEpoch)
+                state.current.mapEpoch != mapEpoch ||
+                state.current.simulationEpoch != authority_->EntitySimulationEpoch(
+                    {world->thingUid, world->generation}, localMap, mapEpoch))
             {
                 state = {};
                 state.previous = capture;
@@ -455,10 +458,15 @@ namespace fable::multiplayer::movement
             current.entityGeneration = world->generation;
             current.ownerActorId = localActorId_;
             current.mapEpoch = mapEpoch;
+            current.simulationEpoch = authority_->EntitySimulationEpoch({world->thingUid, world->generation}, localMap, mapEpoch);
             current.mapName = localMap;
             current.position = capture.position;
             current.facing = NormalizeFacing(capture.facing);
-            if (seconds > 0.0f)
+            // A teleport or an interrupted capture stream has no meaningful
+            // instantaneous velocity; do not extrapolate that jump on peers.
+            if (seconds > 0.0f && elapsedMilliseconds <= 250 &&
+                capture.position.HorizontalDistanceTo(state.previous.position) <= 8.0f &&
+                std::fabs(capture.position.z - state.previous.position.z) <= 8.0f)
             {
                 current.velocity = {
                     (capture.position.x - state.previous.position.x) / seconds,
@@ -511,10 +519,16 @@ namespace fable::multiplayer::movement
             const bool readinessReplay = readinessReplayBudget != 0 &&
                 pendingReadinessReplays_.find(entityUid) !=
                     pendingReadinessReplays_.end();
-            const bool due = !state.hasPublished || stopped ||
+            const bool translated = state.hasPublished &&
+                (state.current.position.HorizontalDistanceTo(state.published.position) >= 0.01f ||
+                 std::fabs(state.current.position.z - state.published.position.z) >= 0.01f);
+            // An unreliable stop packet can be lost. Reassert idle poses too;
+            // otherwise a replica can retain its extrapolated offset forever.
+            const bool heartbeat = now - state.lastPublishedAt >= 500;
+            const bool due = !state.hasPublished || stopped || heartbeat ||
                 (now - state.lastPublishedAt >=
                     PublishIntervalMilliseconds &&
-                    (state.current.moving || rotated)) || readinessReplay;
+                    (state.current.moving || rotated || translated)) || readinessReplay;
             if (!due)
             {
                 continue;
@@ -658,6 +672,9 @@ namespace fable::multiplayer::movement
         {
             return reject("lifecycle-fence");
         }
+        if (message.simulationEpoch != authority_->EntitySimulationEpoch(
+                {message.entityUid, message.entityGeneration}, message.mapName, message.mapEpoch))
+            return reject("simulation-epoch-mismatch");
         const auto existing = currentSamples_.find(message.entityUid);
         if (existing != currentSamples_.end())
         {
@@ -666,7 +683,7 @@ namespace fable::multiplayer::movement
             const bool sameChannel = previous.entityGeneration ==
                     message.entityGeneration &&
                 previous.ownerActorId == message.ownerActorId &&
-                previous.mapEpoch == message.mapEpoch;
+                previous.mapEpoch == message.mapEpoch && previous.simulationEpoch == message.simulationEpoch;
             if (sameChannel &&
                 !IsNewerSequence(message.sequence, previous.sequence))
             {
@@ -805,6 +822,12 @@ namespace fable::multiplayer::movement
         {
             const std::uint64_t entityUid = entry.first;
             const Playback& playback = *entry.second;
+            if (cinematicActive_.load(std::memory_order_acquire) &&
+                game::ScriptControl::HasNativeControl(playback.nativeThing))
+            {
+                stale.push_back(entityUid);
+                continue;
+            }
             const auto current = currentSamples_.find(entityUid);
             const entities::LiveEntityRecord* const live =
                 liveEntities.Find(entityUid);
@@ -813,8 +836,10 @@ namespace fable::multiplayer::movement
             // An NPC handed to this player (nearest / ranged aggro) stops
             // consuming the previous owner's movement at once.
             const bool ownerChanged = current != currentSamples_.end() && world != nullptr &&
-                !authority_->IsEntityPublisher({world->thingUid, world->generation},
-                    world->mapName, current->second.message.ownerActorId, world->mapEpoch);
+                (!authority_->IsEntityPublisher({world->thingUid, world->generation},
+                    world->mapName, current->second.message.ownerActorId, world->mapEpoch) ||
+                    current->second.message.simulationEpoch != authority_->EntitySimulationEpoch(
+                        {world->thingUid, world->generation}, world->mapName, world->mapEpoch));
             if (current == currentSamples_.end() || live == nullptr ||
                 live->thing != playback.nativeThing ||
                 current->second.message.mapName != localMap ||
@@ -856,20 +881,32 @@ namespace fable::multiplayer::movement
                 continue;
             }
 
+            // ScriptedControl also owns ambient quest actors outside movies
+            // (WaspVictim, fleeing villagers). Only cinematic choreography
+            // suspends authoritative movement, not arbitrary script ownership.
+            if (cinematicActive_.load(std::memory_order_acquire) &&
+                game::ScriptControl::HasNativeControl(live->thing))
+            {
+                RetirePlayback(entityUid);
+                continue;
+            }
             auto playback = playbacks_.find(entityUid);
             const bool rebind = playback == playbacks_.end() ||
                 playback->second->nativeThing != live->thing ||
                 playback->second->generation != message.entityGeneration ||
                 playback->second->ownerActorId != message.ownerActorId ||
-                playback->second->mapEpoch != message.mapEpoch;
+                playback->second->mapEpoch != message.mapEpoch ||
+                playback->second->simulationEpoch != message.simulationEpoch;
             if (rebind)
             {
                 RetirePlayback(entityUid);
                 auto created = std::make_unique<Playback>();
+                created->replication = this;
                 created->nativeThing = live->thing;
                 created->generation = message.entityGeneration;
                 created->ownerActorId = message.ownerActorId;
                 created->mapEpoch = message.mapEpoch;
+                created->simulationEpoch = message.simulationEpoch;
                 created->sequence = message.sequence;
                 created->movement.Initialize(*locomotion_, diagnostics_);
                 created->movement.BindNative(
@@ -886,6 +923,13 @@ namespace fable::multiplayer::movement
                     continue;
                 }
                 playbacks_.emplace(entityUid, std::move(created));
+                if (game::ScriptControl::HasNativeControl(live->thing))
+                {
+                    char detail[192] = {};
+                    std::snprintf(detail, sizeof(detail), "thing_uid=%016llX script=%s; owner movement retained outside cinematic",
+                        static_cast<unsigned long long>(entityUid), live->scriptName.c_str());
+                    diagnostics_.Event("MultiplayerScriptedEntityMovementBound", detail);
+                }
                 diagnostics_.Event(
                     "MultiplayerRemoteEntityMovementBound",
                     "retail creature now consumes the current map owner's smoothed movement");

@@ -6,6 +6,7 @@
 #include "Multiplayer/Replication/CombatHitDeliveryState.h"
 
 #include <cstdint>
+#include <array>
 
 namespace fable::game::creature::combat
 {
@@ -63,9 +64,14 @@ namespace fable::multiplayer::combat
             const game::creature::combat::ResolvedHitEvent& event) noexcept;
         void ClearNativeHitObservations() noexcept;
         bool Apply(const protocol::CombatHitMessage& result) noexcept;
+        [[nodiscard]] bool WasDamagedByWorldEntity(std::uint64_t sourceUid, std::uint64_t targetActor,
+            std::uint64_t since) const noexcept;
         void Shutdown() noexcept;
 
     private:
+        struct RecentWorldHit { std::uint64_t source = 0, target = 0, at = 0; };
+        std::array<RecentWorldHit, 64> recentWorldHits_{};
+        std::size_t recentWorldHitIndex_ = 0;
         AppliedHitObserver appliedHitObserver_ = nullptr;
         void* appliedHitObserverContext_ = nullptr;
         [[nodiscard]] void* ResolveTarget(

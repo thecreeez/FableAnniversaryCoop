@@ -75,6 +75,14 @@ namespace fable::multiplayer::combat
             std::uint64_t actorId = 0;
             std::uint64_t until = 0;
         };
+        struct Candidate final
+        {
+            std::uint64_t actorId = 0;
+            std::uint64_t since = 0;
+            std::uint32_t generation = 0;
+            std::uint32_t mapEpoch = 0;
+        };
+        std::unordered_map<std::uint64_t, Candidate> candidates_;
         struct PendingHit final
         {
             std::uint64_t sourceActorId = 0;

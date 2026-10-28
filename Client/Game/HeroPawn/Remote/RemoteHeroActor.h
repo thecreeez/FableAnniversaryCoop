@@ -227,6 +227,7 @@ namespace fable::game::hero_pawn::remote
         std::string appearanceDefinition_;
         std::uint64_t actorId_ = 0;
         std::uint64_t nextSpawnAttemptAt_ = 0;
+        bool cutsceneHidden_ = false;
         bool initialized_ = false;
         bool presentationStateReported_ = false;
         bool worldTransitionActive_ = false;

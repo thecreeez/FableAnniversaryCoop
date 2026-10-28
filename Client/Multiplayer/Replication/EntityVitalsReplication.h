@@ -135,8 +135,10 @@ namespace fable::multiplayer::replication
         void Shutdown() noexcept;
 
     private:
+        std::unordered_map<std::uint64_t, std::uint64_t> awaitingEntityIdentityAt_;
         struct AppliedEntity final
         {
+            std::uint32_t bindingIncarnation = 0;
             void* creature = nullptr;
             std::uint32_t revision = 0;
         };

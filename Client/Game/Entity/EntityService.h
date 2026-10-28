@@ -25,6 +25,7 @@ namespace fable::game
         Entity* GetHero();
         Entity* FindByScriptName(const std::string& scriptName);
         Entity* FindByUid(std::uint64_t uid);
+        Entity* CreateExperienceOrb(const Vector3& position, int amount);
         Entity* CreateCreature(
             const std::string& definition,
             const Vector3& position,

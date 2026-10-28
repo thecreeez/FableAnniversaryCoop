@@ -14,6 +14,7 @@ namespace
         std::uint64_t ownerActorId = 0;
         std::uint32_t mapEpoch = 0;
         std::uint32_t sequence = 0;
+        std::uint32_t simulationEpoch = 0;
         float position[3] = {};
         float velocity[3] = {};
         float facing = 0.0f;
@@ -25,7 +26,7 @@ namespace
 #pragma pack(pop)
 
     static_assert(std::is_trivially_copyable_v<WireEntityMovementMessage>);
-    static_assert(sizeof(WireEntityMovementMessage) == 160);
+    static_assert(sizeof(WireEntityMovementMessage) == 164);
 
     bool IsSane(
         const fable::multiplayer::protocol::EntityMovementMessage& message)
@@ -67,6 +68,7 @@ namespace fable::multiplayer::protocol
         wire.ownerActorId = message.ownerActorId;
         wire.mapEpoch = message.mapEpoch;
         wire.sequence = message.sequence;
+        wire.simulationEpoch = message.simulationEpoch;
         wire.position[0] = message.position.x;
         wire.position[1] = message.position.y;
         wire.position[2] = message.position.z;
@@ -106,6 +108,7 @@ namespace fable::multiplayer::protocol
         message.ownerActorId = wire.ownerActorId;
         message.mapEpoch = wire.mapEpoch;
         message.sequence = wire.sequence;
+        message.simulationEpoch = wire.simulationEpoch;
         message.mapName = wire.mapName;
         message.position = {
             wire.position[0], wire.position[1], wire.position[2]};

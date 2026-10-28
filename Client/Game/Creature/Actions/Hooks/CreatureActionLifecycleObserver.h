@@ -166,6 +166,7 @@ namespace fable::game::creature::actions
             const char* actionType) noexcept;
         static bool ActionMayCarryAnimation(const char* actionType) noexcept;
         static void* ResolveActionOwner(void* action) noexcept;
+        static bool RebindMissingActionOwner(HMODULE module, void* creature, void* action) noexcept;
         static ThingContext ReadThingContext(void* creature) noexcept;
         void Notify(const CreatureActionLifecycleEvent& event) noexcept;
         void NotifyPostUpdate(void* creature) noexcept;

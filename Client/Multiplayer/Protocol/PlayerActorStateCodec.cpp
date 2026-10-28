@@ -64,6 +64,7 @@ namespace
         std::uint32_t rangedWeaponAttachmentSlot = 0;
         std::uint64_t equipmentTransitionActionId = 0;
         std::uint8_t activeWeaponFamily = 0;
+        std::uint8_t combatStance = 0;
         std::uint8_t heroBoneScalePresenceMask[
             (fable::game::hero_pawn::appearance::HeroBoneScaleState::
                 MaximumEntries + 7) / 8] = {};
@@ -77,7 +78,7 @@ namespace
     static_assert(sizeof(WireHeroBoneScale) == 6);
     static_assert(
         std::is_trivially_copyable_v<WirePlayerActorStateMessage>);
-    static_assert(sizeof(WirePlayerActorStateMessage) == 1'188);
+    static_assert(sizeof(WirePlayerActorStateMessage) == 1'189);
     static_assert(
         sizeof(WirePlayerActorStateMessage) <=
             fable::multiplayer::protocol::MaximumReliableMessageBytes,
@@ -298,7 +299,7 @@ namespace
         const bool activeTransition =
             wire.transitionStartedAtSessionTimeMs !=
                 fable::multiplayer::protocol::SessionTimeUnset;
-        return saneFamily && availableFamily &&
+        return wire.combatStance <= 1 && saneFamily && availableFamily &&
             (!activeTransition || wire.equipmentTransitionActionId != 0) &&
             IsSaneTransitionFields(
                 wire.transitionStartedAtSessionTimeMs,
@@ -623,6 +624,7 @@ namespace fable::multiplayer::protocol
                 message.heroEquipment.rangedAttachmentSlot;
             wire.equipmentTransitionActionId =
                 message.heroEquipment.transitionActionId;
+            wire.combatStance = message.heroEquipment.combatStance ? 1 : 0;
             wire.activeWeaponFamily = static_cast<std::uint8_t>(
                 message.heroEquipment.activeFamily);
         }
@@ -735,6 +737,7 @@ namespace fable::multiplayer::protocol
                 wire.rangedWeaponAttachmentSlot;
             message.heroEquipment.transitionActionId =
                 wire.equipmentTransitionActionId;
+            message.heroEquipment.combatStance = wire.combatStance != 0;
             message.heroEquipment.activeFamily = static_cast<
                 game::creature::equipment::CreatureWeaponFamily>(
                     wire.activeWeaponFamily);

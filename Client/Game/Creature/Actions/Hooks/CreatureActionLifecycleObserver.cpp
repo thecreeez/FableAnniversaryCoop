@@ -643,6 +643,18 @@ namespace fable::game::creature::actions
         {
             activeAction = nullptr;
         }
+        if (activeAction != nullptr && ResolveActionOwner(activeAction) != creature)
+        {
+            // Every active action's native SendMessage base dereferences its
+            // owner without a null check (vf62 -> creature +120). Reconcile
+            // a cleared weak owner through the retail counted-pointer API.
+            if (!RebindMissingActionOwner(observer->gameModule_, creature, activeAction))
+            {
+                observer->diagnostics_.Event("CreatureActionOwnerInvalid", "native update deferred: active action has no matching live owner");
+                return;
+            }
+            observer->diagnostics_.Event("CreatureActionOwnerRebound", "retail weak owner restored before active action update");
+        }
         const AuthorityGate gate = observer->authorityGate_.load(
             std::memory_order_acquire);
         if (!observer->IsAuthoritativeReplay(activeAction) &&
@@ -1052,6 +1064,24 @@ namespace fable::game::creature::actions
             }
         }
         return false;
+    }
+
+    bool CreatureActionLifecycleObserver::RebindMissingActionOwner(
+        HMODULE module, void* creature, void* action) noexcept
+    {
+        if (module == nullptr || creature == nullptr || action == nullptr ||
+            ResolveActionOwner(action) != nullptr || !ReadThingContext(creature).readable) return false;
+        // CIntelligentPointer<CThing>::Assign at RVA012E6EE0; checked against
+        // the disassembly, including the complete first seven bytes.
+        const auto address = reinterpret_cast<std::uintptr_t>(module) + 0x012E6EE0;
+        constexpr unsigned char expected[] = {0x56, 0x8B, 0xF1, 0x8B, 0x46, 0x04, 0x57};
+        __try
+        {
+            if (std::memcmp(reinterpret_cast<const void*>(address), expected, sizeof(expected)) != 0) return false;
+            reinterpret_cast<void(__thiscall*)(void*, void*)>(address)(static_cast<unsigned char*>(action) + 8, creature);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        return ResolveActionOwner(action) == creature;
     }
 
     void* CreatureActionLifecycleObserver::ResolveActionOwner(void* action) noexcept

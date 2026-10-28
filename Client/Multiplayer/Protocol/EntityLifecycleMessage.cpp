@@ -12,6 +12,8 @@ namespace
         std::uint8_t operation = 0;
         std::uint8_t flags = 0;
         std::uint16_t reserved = 0;
+        std::int32_t lootGold = 0;
+        std::int32_t lootExperience = 0;
         std::uint64_t entityUid = 0;
         std::uint64_t villageUid = 0;
         std::uint32_t entityGeneration = 0;
@@ -36,7 +38,7 @@ namespace
 #pragma pack(pop)
 
     static_assert(std::is_trivially_copyable_v<WireEntityLifecycleMessage>);
-    static_assert(sizeof(WireEntityLifecycleMessage) == 501);
+    static_assert(sizeof(WireEntityLifecycleMessage) == 509);
 
     template <std::size_t Size>
     bool IsTerminated(const char (&value)[Size]) noexcept
@@ -301,6 +303,9 @@ namespace fable::multiplayer::protocol
         WireEntityLifecycleMessage wire;
         wire.operation = static_cast<std::uint8_t>(message.operation);
         wire.flags = message.flags;
+        wire.reserved = message.groundLoot ? 1 : 0;
+        wire.lootGold = message.lootGold;
+        wire.lootExperience = message.lootExperience;
         wire.entityUid = message.entityUid;
         wire.villageUid = message.villageUid;
         wire.entityGeneration = message.entityGeneration;
@@ -348,7 +353,7 @@ namespace fable::multiplayer::protocol
 
         WireEntityLifecycleMessage wire;
         std::memcpy(&wire, bytes, sizeof(wire));
-        if (wire.reserved != 0 ||
+        if (wire.lootExperience < 0 || wire.lootExperience > 1000000 || wire.reserved > 1 || wire.lootGold < 0 || wire.lootGold > 1000000 ||
             !IsTerminated(wire.mapName) ||
             !IsTerminated(wire.sourceMapName) ||
             !IsTerminated(wire.definitionName) ||
@@ -360,6 +365,9 @@ namespace fable::multiplayer::protocol
         message.operation = static_cast<EntityLifecycleOperation>(
             wire.operation);
         message.flags = wire.flags;
+        message.groundLoot = wire.reserved != 0;
+        message.lootGold = wire.lootGold;
+        message.lootExperience = wire.lootExperience;
         message.entityUid = wire.entityUid;
         message.villageUid = wire.villageUid;
         message.entityGeneration = wire.entityGeneration;

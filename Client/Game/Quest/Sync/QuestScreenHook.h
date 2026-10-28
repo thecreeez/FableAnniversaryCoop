@@ -24,11 +24,15 @@ namespace fable::multiplayer::persistence
         {
             std::string name;
             bool mode = false;
+            bool closed = false;
         };
 
         bool Install(HMODULE gameModule, const core::Diagnostics& diagnostics) noexcept;
         void Shutdown() noexcept;
         bool PopObservation(Observation& observation);
+        void Poll(void* localHero);
+        static bool ConfirmLocalCard(void* localHero) noexcept;
+        bool Close(void* localHero, const char* questName) noexcept;
         // Game thread; shows the card for questName on this peer.
         bool Replay(void* scriptInterface, const char* questName, bool mode) noexcept;
 
@@ -47,5 +51,10 @@ namespace fable::multiplayer::persistence
         core::Diagnostics diagnostics_ = {};
         std::mutex mutex_;
         std::deque<Observation> observations_;
+        void* observedCard_ = nullptr;
+        std::string observedName_;
+        bool observedMode_ = false;
+        bool wasOpen_ = false;
+        bool forcedClose_ = false;
     };
 }

@@ -47,6 +47,7 @@ namespace fable::game::hero_pawn::equipment
     struct HeroEquipmentState final
     {
         bool valid = false;
+        bool combatStance = false;
         std::int32_t meleeDefinitionIndex = -1;
         std::int32_t rangedDefinitionIndex = -1;
         std::uint32_t meleeAttachmentSlot = 0;
@@ -95,7 +96,7 @@ namespace fable::game::hero_pawn::equipment
         [[nodiscard]] bool Equals(
             const HeroEquipmentState& other) const noexcept
         {
-            return valid == other.valid &&
+            return valid == other.valid && combatStance == other.combatStance &&
                 meleeDefinitionIndex == other.meleeDefinitionIndex &&
                 rangedDefinitionIndex == other.rangedDefinitionIndex &&
                 meleeAttachmentSlot == other.meleeAttachmentSlot &&

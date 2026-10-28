@@ -1,5 +1,7 @@
+#include <cstring>
 #include "PlayerDeathCoordinator.h"
 #include "PlayerDeathPolicy.h"
+#include "PlayerCombatantDirectory.h"
 
 #include "Game/Creature/Combat/CreatureCombatService.h"
 #include "Game/Quest/QuestService.h"
@@ -11,14 +13,60 @@
 
 namespace fable::multiplayer::combat
 {
+    PlayerDeathCoordinator* PlayerDeathCoordinator::active_ = nullptr;
+
+    void __stdcall PlayerDeathCoordinator::ResurrectionTutorial(int index, int parameter)
+    {
+        (void)index;
+        (void)parameter;
+        if (active_ != nullptr)
+            active_->diagnostics_.Event("MultiplayerResurrectionTutorialSuppressed",
+                "recovery finished; retail tutorial49 bypassed before modal UI creation");
+    }
+
+    int __fastcall PlayerDeathCoordinator::NativeDeath(void* creature, void*)
+    {
+        auto* self = active_;
+        if (self == nullptr || self->originalDeath_ == nullptr) return 0;
+        // PlayerCreature::vf16 opens a process-global death UI/mode40 when
+        // no local inventory flask exists. A remote Hero is only a proxy;
+        // its owning client handles inventory and recovery. Never run that
+        // global UI path on an observer after a replicated terminal hit.
+        if (creature != self->localCreature_ && self->combatants_ != nullptr &&
+            self->combatants_->FindActor(creature) != 0)
+        {
+            self->diagnostics_.Event("MultiplayerRemotePlayerDeathUiSuppressed",
+                "remote Hero death remains owner-authoritative; no observer death UI or inventory consumption");
+            return 0;
+        }
+        float health = 0, maximum = 0;
+        if (creature == self->localCreature_ && self->combat_ != nullptr &&
+            self->combat_->ReadCombatHealth(creature, health, maximum) && health > TerminalHealth)
+        {
+            // A queued terminal action may finish after native recovery.
+            // It must not consume a second flask or open a stale death card.
+            return 0;
+        }
+        if (creature == self->localCreature_ && self->combat_ != nullptr &&
+            self->combat_->ConsumeNativeResurrectionFlask(creature))
+        {
+            self->diagnostics_.Event("MultiplayerResurrectionFlaskConsumedNoPause",
+                "one native flask consumed; native recovery action; no quest-exit/death card or world pause");
+            return 0;
+        }
+        return self->originalDeath_(creature);
+    }
+
     bool PlayerDeathCoordinator::Initialize(
         game::creature::combat::CreatureCombatService& combat,
         game::QuestService& quests,
+        PlayerCombatantDirectory& combatants,
         const core::Diagnostics& diagnostics) noexcept
     {
         Shutdown();
         combat_ = &combat;
         quests_ = &quests;
+        combatants_ = &combatants;
         diagnostics_ = diagnostics;
         acceptingEvents_.store(true, std::memory_order_release);
         if (!combat_->AddHealthMutationSink(
@@ -30,10 +78,42 @@ namespace fable::multiplayer::combat
             diagnostics_ = {};
             return false;
         }
+        const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+        unsigned char expected[7] = {0x6A, 0xFF, 0x68};
+        const auto handler = base + 0x02555E0B;
+        std::memcpy(expected + 3, &handler, sizeof(handler));
+        active_ = this;
+        if (!nativeDeathHook_.Install(reinterpret_cast<void*>(base + 0x01B5EAA0), expected, sizeof(expected),
+            reinterpret_cast<void*>(&NativeDeath), sizeof(expected)))
+        {
+            active_ = nullptr;
+            diagnostics_.Event("MultiplayerNativeDeathHookBlocked", "player-death prologue did not match");
+            Shutdown();
+            return false;
+        }
+        originalDeath_ = reinterpret_cast<NativeDeathFn>(nativeDeathHook_.Original());
+        // RecoverFromDeath::vf4 calls the tutorial/profile dispatcher(49,0),
+        // separately from the death card. Keep the base vf4 cleanup (mode31,
+        // orientation and weapon state); replace only this call, ret8 ABI.
+        constexpr std::uintptr_t callRva = 0x017AF2C3;
+        unsigned char expectedCall[5] = {0xE8}, replacementCall[5] = {0xE8};
+        const auto originalDisplacement = static_cast<std::int32_t>(0x019AA450 - (callRva + 5));
+        const auto replacementDisplacement = static_cast<std::int32_t>(
+            reinterpret_cast<std::uintptr_t>(&ResurrectionTutorial) - (base + callRva + 5));
+        std::memcpy(expectedCall + 1, &originalDisplacement, sizeof(originalDisplacement));
+        std::memcpy(replacementCall + 1, &replacementDisplacement, sizeof(replacementDisplacement));
+        if (!resurrectionTutorialCall_.Install(reinterpret_cast<void*>(base + callRva),
+            expectedCall, sizeof(expectedCall), replacementCall, sizeof(replacementCall)))
+        {
+            diagnostics_.Event("MultiplayerResurrectionTutorialHookBlocked", "recovery tutorial call did not match");
+            Shutdown();
+            return false;
+        }
+        diagnostics_.Event("MultiplayerResurrectionTutorialHookReady", "checked recovery tutorial49 call replaced");
         initialized_ = true;
         diagnostics_.Event(
             "MultiplayerPlayerDeathReady",
-            "native resurrection phials remain authoritative; terminal Heroes use the retail Guild teleport quest");
+            "native resurrection phials and death card remain authoritative; no speculative teleport or healing");
         return true;
     }
 
@@ -51,6 +131,7 @@ namespace fable::multiplayer::combat
             captured.swap(events_);
         }
         void* const localCreature = localHero.NativeHero();
+        localCreature_ = localCreature;
         for (const auto& event : captured)
         {
             if (localCreature == nullptr || event.creature != localCreature)
@@ -70,7 +151,7 @@ namespace fable::multiplayer::combat
                 pending_.creature = event.creature;
                 pending_.thingUid = event.thingUid;
                 pending_.observedAt = event.observedAt;
-                pending_.nextAttemptAt = event.observedAt;
+                pending_.nextAttemptAt = event.observedAt + 1500;
             }
         }
         if (pending_.creature == nullptr)
@@ -94,7 +175,7 @@ namespace fable::multiplayer::combat
         {
             diagnostics_.Event(
                 "MultiplayerPlayerNativeResurrectionObserved",
-                "local Hero recovered before Guild fallback; native inventory behavior won");
+                "local Hero recovered through native death/phial processing");
             pending_ = {};
             return true;
         }
@@ -104,57 +185,41 @@ namespace fable::multiplayer::combat
         {
             return true;
         }
-        ++pending_.attempts;
-        pending_.nextAttemptAt = now +
-            (pending_.attempts < 8 ? 250u : 1'000u);
-
-        const bool registered = quests_->IsRegistered(GuildTeleportQuest);
-        const bool accepted = registered &&
-            (quests_->IsActive(GuildTeleportQuest) ||
-                quests_->Activate(GuildTeleportQuest));
-        if (!accepted)
+        // Give the existing native death action time to consume its phial.
+        // One fallback per death, through PlayerCreature::vf16, never a
+        // cancellable quest teleport followed by speculative full healing.
+        if (pending_.attempts != 0) return true;
+        if (originalDeath_ != nullptr)
         {
+            ++pending_.attempts;
+            NativeDeath(localCreature, nullptr);
+            diagnostics_.Event("MultiplayerPlayerNativeDeathSubmitted",
+                "retail phial/death-card path submitted once; health left to native recovery");
+        }
+        else
+        {
+            pending_.nextAttemptAt = now + 1000;
             if (!pending_.reportedDeferred)
             {
-                char detail[224] = {};
-                std::snprintf(
-                    detail,
-                    sizeof(detail),
-                    "thing_uid=%016llX quest=%s registered=%s; retrying outside the health hook",
-                    static_cast<unsigned long long>(pending_.thingUid),
-                    GuildTeleportQuest,
-                    registered ? "true" : "false");
-                diagnostics_.Event(
-                    "MultiplayerPlayerGuildRespawnDeferred", detail);
+                diagnostics_.Event("MultiplayerPlayerNativeDeathDeferred", "native PlayerCreature death entry unavailable; no healing or teleport applied");
                 pending_.reportedDeferred = true;
             }
-            return true;
         }
-
-        const float healing = maximumHealth > currentHealth
-            ? maximumHealth - currentHealth
-            : 0.0f;
-        if (healing <= TerminalHealth ||
-            !combat_->ApplyOwnedCombatHealing(localCreature, healing))
-        {
-            return true;
-        }
-        char detail[256] = {};
-        std::snprintf(
-            detail,
-            sizeof(detail),
-            "thing_uid=%016llX quest=%s restored_health=%.3f attempts=%u",
-            static_cast<unsigned long long>(pending_.thingUid),
-            GuildTeleportQuest,
-            maximumHealth,
-            pending_.attempts);
-        diagnostics_.Event("MultiplayerPlayerGuildRespawnStarted", detail);
-        pending_ = {};
         return true;
+    }
+
+    bool PlayerDeathCoordinator::DamageForAcceptance(void* hero, float damage) noexcept
+    {
+        return combat_ != nullptr && hero == localCreature_ && combat_->ApplyOwnedCombatDamage(hero, damage);
     }
 
     void PlayerDeathCoordinator::Shutdown() noexcept
     {
+        if (!resurrectionTutorialCall_.Shutdown()) return;
+        if (!nativeDeathHook_.Shutdown()) return;
+        if (active_ == this) active_ = nullptr;
+        originalDeath_ = nullptr;
+        localCreature_ = nullptr;
         acceptingEvents_.store(false, std::memory_order_release);
         if (combat_ != nullptr)
         {
@@ -169,6 +234,7 @@ namespace fable::multiplayer::combat
         droppedEvents_.store(0, std::memory_order_release);
         combat_ = nullptr;
         quests_ = nullptr;
+        combatants_ = nullptr;
         diagnostics_ = {};
         initialized_ = false;
     }

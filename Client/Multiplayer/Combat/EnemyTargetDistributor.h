@@ -1,3 +1,5 @@
+#include "Multiplayer/Transport/ReliableMessageDispatcher.h"
+#include "Multiplayer/Protocol/PlayerState.h"
 #pragma once
 
 #include "Core/Diagnostics/Diagnostics.h"
@@ -13,6 +15,7 @@ namespace fable::game
 
 namespace fable::multiplayer
 {
+    class UdpPeer;
     namespace authority
     {
         class EntitySimulationAuthority;
@@ -20,6 +23,8 @@ namespace fable::multiplayer
     namespace entities
     {
         class EntityPresenceReplication;
+        class EntityLifecycleReplication;
+        class EntityNetworkIdentityRegistry;
     }
     namespace replication
     {
@@ -29,22 +34,25 @@ namespace fable::multiplayer
     }
 }
 
+namespace fable::multiplayer::protocol { struct CombatHitMessage; }
+
 namespace fable::multiplayer::combat
 {
     class PlayerCombatantDirectory;
 
-    // Enemies attack every player, not just the map owner. Fable's AI picks
-    // its target among creatures it perceives, and on the map owner that is
-    // effectively the local Hero. For each NPC the owner simulates that is
-    // engaged with a player, aim it at the nearest player on the map through
-    // CTCTargetingAI's script target override (a remote Hero's presentation
-    // creature, whose hits the combat replication forwards to that player),
-    // and hand it back to retail targeting when the local Hero is nearest.
-    // Game thread.
-    class EnemyTargetDistributor final
+    // Owner-only targeting: living players in range, balanced swarm pressure,
+    // sticky distance choices and damage-driven revenge. Script choreography
+    // retains ownership of its own target override. Game thread only.
+    class EnemyTargetDistributor final : public ReliableMessageSink
     {
     public:
+        ReliableMessageTypeSet HandledPacketTypes() const noexcept override
+        { static constexpr protocol::PacketType types[] = {protocol::PacketType::EnemyTarget}; return {types, 1}; }
+        bool HandleReliableMessage(const TransportMessage& message) override;
         void Initialize(
+            PeerRole role, UdpPeer& transport,
+            entities::EntityLifecycleReplication& lifecycle,
+            entities::EntityNetworkIdentityRegistry& identities,
             game::EntityService& entities,
             replication::EntityActionReplication& entityActions,
             authority::EntitySimulationAuthority& simulation,
@@ -55,6 +63,13 @@ namespace fable::multiplayer::combat
             const core::Diagnostics& diagnostics) noexcept;
         void Shutdown() noexcept;
         void Process();
+        std::size_t NativeTargetCount(std::uint64_t actor) const noexcept
+        {
+            std::size_t count = 0;
+            for (const auto& entry : nativeAssignments_) if (entry.second.actorId == actor && entry.second.readReported) ++count;
+            return count;
+        }
+        static void ObserveAppliedHit(void* context, const protocol::CombatHitMessage& hit);
 
     private:
         static constexpr std::uint64_t ProcessIntervalMilliseconds = 500;
@@ -67,13 +82,46 @@ namespace fable::multiplayer::combat
         struct Assignment final
         {
             void* creature = nullptr;
+            void* targetCreature = nullptr;
             std::uint64_t actorId = 0;
             bool overridden = false;
             std::uint64_t appliedAt = 0;
+            std::uint64_t selectedAt = 0;
+            std::uint32_t incarnation = 0;
+            std::uint32_t generation = 0, mapEpoch = 0;
+            std::uint16_t mapId = 0;
+            std::uint64_t revision = 0, publishedAt = 0;
+            bool readReported = false;
         };
 
+        struct Threat { float damage = 0; std::uint64_t at = 0; };
+        struct Revenge
+        {
+            std::uint32_t generation = 0, mapEpoch = 0;
+            std::uint64_t revision = 0, actor = 0, lockedUntil = 0, lastHit = 0;
+            float maximumHealth = 0;
+            std::unordered_map<std::uint64_t, Threat> attackers;
+        };
+        std::unordered_map<std::uint64_t, Revenge> revenge_;
         void Release(std::uint64_t thingUid, Assignment& assignment) noexcept;
 
+        void ApplyPlans(std::uint64_t now);
+        #pragma pack(push, 1)
+        struct Plan
+        {
+            std::uint64_t uid = 0, actor = 0, revision = 0;
+            std::uint32_t generation = 0, mapEpoch = 0;
+            std::uint16_t mapId = 0;
+        };
+        #pragma pack(pop)
+        struct ReceivedPlan { Plan plan; std::uint64_t at; };
+        PeerRole role_ = PeerRole::Guest;
+        UdpPeer* transport_ = nullptr;
+        entities::EntityLifecycleReplication* lifecycle_ = nullptr;
+        entities::EntityNetworkIdentityRegistry* identities_ = nullptr;
+        std::uint64_t nextRevision_ = 0;
+        std::unordered_map<std::uint64_t, ReceivedPlan> plans_;
+        std::unordered_map<std::uint64_t, Assignment> nativeAssignments_;
         game::EntityService* entities_ = nullptr;
         replication::EntityActionReplication* entityActions_ = nullptr;
         authority::EntitySimulationAuthority* simulation_ = nullptr;

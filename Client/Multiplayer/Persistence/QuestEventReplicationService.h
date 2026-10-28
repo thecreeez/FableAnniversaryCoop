@@ -13,6 +13,8 @@
 #include <string>
 #include <unordered_map>
 
+namespace fable::multiplayer::authority { class AuthorityReplication; }
+
 namespace fable::multiplayer
 {
     class UdpPeer;
@@ -49,6 +51,8 @@ namespace fable::multiplayer::persistence
         // Game thread only: publishes local transitions and replays pending
         // remote ones once the local quest manager exists.
         bool Process();
+        void SetScreenContext(authority::AuthorityReplication& authority, void* hero, std::uint16_t mapId) noexcept
+        { screenAuthority_ = &authority; screenHero_ = hero; screenMapId_ = mapId; }
 
         bool HandleReliableMessage(const TransportMessage& message) override;
 
@@ -93,6 +97,11 @@ namespace fable::multiplayer::persistence
 
         bool PublishScreen(const QuestScreenHook::Observation& observation);
 
+        authority::AuthorityReplication* screenAuthority_ = nullptr;
+        void* screenHero_ = nullptr;
+        std::uint16_t screenMapId_ = 0;
+        struct PendingClose { std::uint64_t receivedAt; std::uint16_t mapId; std::uint32_t epoch; };
+        std::unordered_map<std::string, PendingClose> pendingCloses_;
         QuestScreenHook screenHook_;
         // Quest name -> when its card was last shown here (own script or
         // replay); a peer's copy of the same card is not shown twice.

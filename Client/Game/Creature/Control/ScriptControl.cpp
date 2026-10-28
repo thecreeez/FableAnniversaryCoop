@@ -1,3 +1,4 @@
+#include "Game/Entity/Native/ThingComponentAccess.h"
 #include "ScriptControl.h"
 
 #include "Game/Creature/Locomotion/Native/FollowCreatureActionFunctions.h"
@@ -48,6 +49,15 @@ namespace
 
 namespace fable::game
 {
+    bool ScriptControl::HasNativeControl(void* creature) noexcept
+    {
+        void* component = entity::native::ThingComponentAccess::Find(
+            creature, entity::native::ThingComponentType::ScriptedControl);
+        if (component == nullptr) return false;
+        __try { return static_cast<unsigned char*>(component)[0x20] != 0; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
     ScriptControl* ScriptControl::Create(
         EntityService& service,
         const native::ScriptThing& entity,

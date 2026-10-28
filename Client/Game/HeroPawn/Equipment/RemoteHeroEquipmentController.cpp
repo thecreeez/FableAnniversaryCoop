@@ -1,3 +1,4 @@
+#include "Game/HeroPawn/Equipment/Native/HeroWeaponComponent.h"
 #include "RemoteHeroEquipmentController.h"
 
 #include "Game/Creature/Equipment/Native/CreatureWeaponFunctions.h"
@@ -407,6 +408,19 @@ namespace fable::game::hero_pawn::equipment
         const HeroEquipmentState& state,
         std::uint64_t now)
     {
+        if (nativeHero_ != nullptr && state.IsSane())
+        {
+            if (!native::HeroWeaponComponent::SetRemoteCombatStance(nativeHero_, state.combatStance))
+                diagnostics_.Event("MultiplayerCombatStanceRejected", "native predicate hook or state registration unavailable");
+            else if (!applied_.valid || applied_.combatStance != state.combatStance)
+            {
+                char detail[160] = {};
+                std::snprintf(detail, sizeof(detail), "actor=%llu active=%d native=%d",
+                    static_cast<unsigned long long>(actorId_), state.combatStance ? 1 : 0,
+                    native::HeroWeaponComponent::ReadCombatStance(nativeHero_) ? 1 : 0);
+                diagnostics_.Event("MultiplayerCombatStanceApplied", detail);
+            }
+        }
         transitions_.Process(now);
         if (hero_ == nullptr || !hero_->IsValid() || nativeHero_ == nullptr ||
             !state.IsSane())
@@ -650,6 +664,7 @@ namespace fable::game::hero_pawn::equipment
 
     void RemoteHeroEquipmentController::Unbind() noexcept
     {
+        native::HeroWeaponComponent::ClearRemoteCombatStance(nativeHero_);
         transitions_.Unbind();
         weaponCache_.Reset();
         if (orientationHook_ != nullptr && orientationToken_ != 0)

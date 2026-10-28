@@ -1,3 +1,6 @@
+#include "Game/Native/Addresses.h"
+#include "Game/Native/ScriptTypes.h"
+#include "Game/Quest/Sync/QuestScreenHook.h"
 #include "CutsceneAcceptanceDriver.h"
 
 #include "Automation/Multiplayer/Transition/NativeRegionRoute.h"
@@ -13,6 +16,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 
 namespace
 {
@@ -22,7 +26,6 @@ namespace
     constexpr std::uint16_t PicnicAreaMapId = 2;
     constexpr const char* LookoutPoint = "LookoutPoint";
     constexpr const char* PicnicArea = "PicnicArea";
-    constexpr std::uint64_t EngagementWindowMilliseconds = 8'000;
     constexpr std::uint64_t WaspTeleportMilliseconds = 6'000;
     constexpr float NearDistance = 8.0f;
 
@@ -31,28 +34,89 @@ namespace
     // next update closes the card and unpauses the world, as retail does.
     constexpr std::int32_t QuestCardComponent = 0xFC;
 
-    bool AcceptQuestCard(void* const hero) noexcept
+    int FlaskCount(void* hero, bool ensureOne = false) noexcept
     {
-        if (hero == nullptr) return false;
-        auto* const card = static_cast<std::uint8_t*>(fable::game::entity::native::ThingComponentAccess::Find(
-            hero, static_cast<fable::game::entity::native::ThingComponentType>(QuestCardComponent)));
-        if (card == nullptr) return false;
+        using namespace fable::game::native;
+        const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+        CharString name = {};
+        int count = -1;
+        bool built = false;
         __try
         {
-            if (card[0x0D] == 0 || card[0x20] != 0) return false;
-            card[0x20] = 1;
-            return true;
+            reinterpret_cast<void(__thiscall*)(CharString*, const char*, int)>(base + rva::CharStringConstructor)(
+                &name, "OBJECT_RESURRECTION_PHIAL", -1);
+            built = true;
+            void* manager = *reinterpret_cast<void**>(base + rva::ThingManagerSlot);
+            void* definitions = manager != nullptr ? *reinterpret_cast<void**>(static_cast<unsigned char*>(manager) + 0x2C) : nullptr;
+            const int definition = definitions != nullptr ? reinterpret_cast<int(__thiscall*)(void*, CharString*)>(
+                base + rva::DefinitionIndexByName)(definitions, &name) : 0;
+            void* inventory = fable::game::entity::native::ThingComponentAccess::Find(hero,
+                static_cast<fable::game::entity::native::ThingComponentType>(0x11));
+            if (definition > 0 && inventory != nullptr)
+            {
+                using Count = int(__thiscall*)(void*, int);
+                count = reinterpret_cast<Count>(base + 0x019F1108)(inventory, definition);
+                if (ensureOne && count == 0)
+                {
+                    using Add = bool(__thiscall*)(void*, int, int, bool, bool, int, bool);
+                    reinterpret_cast<Add>(base + 0x019F2375)(inventory, definition, 1, false, false, 0, false);
+                    count = reinterpret_cast<Count>(base + 0x019F1108)(inventory, definition);
+                }
+            }
         }
-        __except (EXCEPTION_EXECUTE_HANDLER)
+        __except (EXCEPTION_EXECUTE_HANDLER) { count = -1; }
+        if (built)
         {
-            return false;
+            __try { reinterpret_cast<void(__thiscall*)(CharString*)>(base + rva::CharStringDestructor)(&name); }
+            __except (EXCEPTION_EXECUTE_HANDLER) { count = -1; }
         }
+        return count;
+    }
+
+    bool SetOrbAmount(void* orb, int amount) noexcept
+    {
+        if (orb == nullptr) return false;
+        __try { *reinterpret_cast<int*>(static_cast<unsigned char*>(orb) + 0x10) = amount; return true; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    int ReadOrbAmount(void* orb) noexcept
+    {
+        if (orb == nullptr) return -1;
+        __try { return *reinterpret_cast<int*>(static_cast<unsigned char*>(orb) + 0x10); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+    }
+
+    bool DeathCardOpen(void* hero) noexcept
+    {
+        auto* card = static_cast<unsigned char*>(fable::game::entity::native::ThingComponentAccess::Find(hero,
+            static_cast<fable::game::entity::native::ThingComponentType>(0xFC)));
+        if (card == nullptr) return false;
+        __try { return card[0xD] != 0 && *reinterpret_cast<int*>(card + 0x24) == 3; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return true; }
+    }
+
+    bool ModalTutorialOpen() noexcept
+    {
+        __try
+        {
+            const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+            auto* hud = *reinterpret_cast<unsigned char**>(base + 0x0322B3CC);
+            auto* manager = hud != nullptr ? hud + 0x18 : nullptr;
+            return manager != nullptr && manager[0xED] != 0 &&
+                (*reinterpret_cast<std::uint32_t*>(manager + 0x6C) & 0x20000u) != 0;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return true; }
+    }
+
+    bool AcceptQuestCard(void* const hero) noexcept
+    {
+        return fable::multiplayer::persistence::QuestScreenHook::ConfirmLocalCard(hero);
     }
 
     bool IsWaspName(const std::string& name) noexcept
     {
         return (name.find("Hornet") != std::string::npos || name.find("Wasp") != std::string::npos) &&
-            name.find("Victim") == std::string::npos && name.find("Woman") == std::string::npos &&
+            name.find("Attacker") == std::string::npos && name.find("Victim") == std::string::npos && name.find("Woman") == std::string::npos &&
             name.find("Queen") == std::string::npos && name.find("Pos") == std::string::npos;
     }
 }
@@ -86,6 +150,8 @@ namespace fable::automation::multiplayer::features
         entities_ = nullptr;
         multiplayer_ = nullptr;
         hostVisits_ = 0;
+        swarmUids_.clear();
+        swarmSelected_ = false;
         lastHostMap_ = 0;
         phase_.store(Phase::WaitingForWorld, std::memory_order_release);
     }
@@ -147,92 +213,105 @@ namespace fable::automation::multiplayer::features
         return moved;
     }
 
-    bool CutsceneAcceptanceDriver::FindWasp(std::uint64_t& uid, float (&position)[3]) noexcept
+    bool CutsceneAcceptanceDriver::FindCorpseSwarm(const float (&nearby)[3], float (&position)[3]) noexcept
     {
-        auto& contexts = multiplayer_->Contexts();
-        const auto* const local = contexts.players.localHero.CurrentState();
+        const auto* local = multiplayer_->Contexts().players.localHero.CurrentState();
         if (local == nullptr) return false;
-        bool found = false;
-        float best = 0.0f;
-        for (const auto& record : contexts.entities.entityPresence.LiveEntities().Snapshot())
+        struct Point { std::uint64_t uid; game::Vector3 at; };
+        std::vector<Point> wasps;
+        std::vector<game::Vector3> corpses;
+        for (const auto& record : multiplayer_->Contexts().entities.entityPresence.LiveEntities().Snapshot())
         {
-            if (!record.creature || record.thing == nullptr || record.mapId != local->mapId ||
-                !IsWaspName(record.scriptName) || !contexts.world.entitySimulation.IsLocallySimulated(record.thing))
-            {
-                continue;
-            }
-            game::Entity* const entity = entities_->FindByUid(record.thingUid);
+            if (record.thing == nullptr || record.mapId != local->mapId) continue;
+            const auto nativeUid = multiplayer_->Contexts().entities.entityIdentities.FindLocal(record.thingUid);
+            game::Entity* entity = entities_->FindByUid(nativeUid != 0 ? nativeUid : record.thingUid);
             if (entity == nullptr) continue;
             const bool valid = entity->IsValid();
-            const game::Vector3 at = valid ? entity->GetPosition() : game::Vector3{};
+            const bool dead = valid && entity->IsDead();
+            const auto at = valid ? entity->GetPosition() : game::Vector3{};
+            const auto definition = valid && !record.creature ? entity->GetDefinitionName() : std::string{};
             entity->Release();
             if (!valid || !std::isfinite(at.x) || !std::isfinite(at.y)) continue;
-            const float dx = at.x - local->position.x;
-            const float dy = at.y - local->position.y;
-            const float distance = std::sqrt(dx * dx + dy * dy);
-            if (!found || distance < best)
-            {
-                found = true;
-                best = distance;
-                uid = record.thingUid;
-                position[0] = at.x;
-                position[1] = at.y;
-                position[2] = local->position.z;
-            }
+            if (record.creature && !dead && IsWaspName(record.scriptName)) wasps.push_back({record.thingUid, at});
+            else if ((dead && !IsWaspName(record.scriptName)) ||
+                definition.find("CORPSE") != std::string::npos || definition.find("DEAD_BODY") != std::string::npos ||
+                record.scriptName.find("_DEAD_CREATURE") != std::string::npos)
+                corpses.push_back(at);
         }
-        return found;
+        float best = 1.0e30f;
+        std::vector<std::uint64_t> selected;
+        for (const auto& corpse : corpses)
+        {
+            std::vector<std::uint64_t> members;
+            game::Vector3 center{};
+            for (const auto& wasp : wasps)
+            {
+                const float dx = wasp.at.x - corpse.x, dy = wasp.at.y - corpse.y;
+                if (dx * dx + dy * dy > 144.0f) continue;
+                members.push_back(wasp.uid);
+                center.x += wasp.at.x; center.y += wasp.at.y;
+            }
+            if (members.size() < 2) continue;
+            center.x /= static_cast<float>(members.size()); center.y /= static_cast<float>(members.size());
+            const float dx = center.x - nearby[0], dy = center.y - nearby[1];
+            const float distance = dx * dx + dy * dy;
+            if (distance >= best) continue;
+            best = distance;
+            selected = std::move(members);
+            position[0] = center.x; position[1] = center.y; position[2] = local->position.z;
+        }
+        if (selected.empty())
+        {
+            static std::uint64_t reportAt = 0;
+            const auto now = GetTickCount64();
+            if (now >= reportAt)
+            {
+                reportAt = now + 5000;
+                char detail[128] = {};
+                std::snprintf(detail, sizeof(detail), "corpses=%zu eligible_wasps=%zu required_group=2 radius=12", corpses.size(), wasps.size());
+                diagnostics_.Event("EnemyTestCorpseSwarmUnavailable", detail);
+            }
+            return false;
+        }
+        swarmUids_ = std::move(selected);
+        std::memcpy(swarmCenter_, position, sizeof(swarmCenter_));
+        swarmSelected_ = true;
+        char detail[128] = {};
+        std::snprintf(detail, sizeof(detail), "members=%zu center=(%.1f,%.1f,%.1f) excludes=WaspAttacker,WaspVictim",
+            swarmUids_.size(), position[0], position[1], position[2]);
+        diagnostics_.Event("EnemyTestCorpseSwarmSelected", detail);
+        return true;
+    }
+
+    bool CutsceneAcceptanceDriver::FindWasp(std::uint64_t& uid, float (&position)[3]) noexcept
+    {
+        const auto* local = multiplayer_->Contexts().players.localHero.CurrentState();
+        if (local == nullptr) return false;
+        const float at[3] = {local->position.x, local->position.y, local->position.z};
+        if (!FindCorpseSwarm(at, position)) return false;
+        uid = swarmUids_.front(); // diagnostic only, never a teleport target
+        return true;
     }
 
     bool CutsceneAcceptanceDriver::WaspPosition(float (&position)[3]) noexcept
     {
-        game::Entity* const wasp = waspUid_ != 0 ? entities_->FindByUid(waspUid_) : nullptr;
-        if (wasp == nullptr) return false;
-        const bool valid = wasp->IsValid();
-        const game::Vector3 at = valid ? wasp->GetPosition() : game::Vector3{};
-        wasp->Release();
-        if (!valid || !std::isfinite(at.x) || !std::isfinite(at.y)) return false;
-        const auto* const local = multiplayer_->Contexts().players.localHero.CurrentState();
-        position[0] = at.x;
-        position[1] = at.y;
-        position[2] = local != nullptr ? local->position.z : at.z;
+        if (!swarmSelected_) return false;
+        std::memcpy(position, swarmCenter_, sizeof(swarmCenter_));
         return true;
     }
 
-    bool CutsceneAcceptanceDriver::FindWaspNear(
-        const float (&nearby)[3], std::uint64_t& uid, float (&position)[3]) noexcept
+    bool CutsceneAcceptanceDriver::FindWaspNear(const float (&nearby)[3], std::uint64_t& uid, float (&position)[3]) noexcept
     {
-        auto& contexts = multiplayer_->Contexts();
-        const auto* const local = contexts.players.localHero.CurrentState();
-        if (local == nullptr) return false;
-        bool found = false;
-        float best = 0.0f;
-        for (const auto& record : contexts.entities.entityPresence.LiveEntities().Snapshot())
-        {
-            if (!record.creature || record.thing == nullptr || record.mapId != local->mapId ||
-                !IsWaspName(record.scriptName))
-            {
-                continue;
-            }
-            game::Entity* const entity = entities_->FindByUid(record.thingUid);
-            if (entity == nullptr) continue;
-            const bool valid = entity->IsValid();
-            const game::Vector3 at = valid ? entity->GetPosition() : game::Vector3{};
-            entity->Release();
-            if (!valid || !std::isfinite(at.x) || !std::isfinite(at.y)) continue;
-            const float dx = at.x - nearby[0];
-            const float dy = at.y - nearby[1];
-            const float distance = std::sqrt(dx * dx + dy * dy);
-            if (!found || distance < best)
-            {
-                found = true;
-                best = distance;
-                uid = record.thingUid;
-                position[0] = at.x;
-                position[1] = at.y;
-                position[2] = local->position.z;
-            }
-        }
-        return found;
+        if (!FindCorpseSwarm(nearby, position)) return false;
+        uid = swarmUids_.front();
+        return true;
+    }
+
+    bool CutsceneAcceptanceDriver::SwarmDamagedPlayer(std::uint64_t actor) const noexcept
+    {
+        for (const auto uid : swarmUids_)
+            if (multiplayer_->Contexts().actions.combatHits.WasDamagedByWorldEntity(uid, actor, phaseStartedAt_)) return true;
+        return false;
     }
 
     bool CutsceneAcceptanceDriver::LocalHeroWasHit() noexcept
@@ -242,7 +321,8 @@ namespace fable::automation::multiplayer::features
         // Keep the test alive: restore what the hit took.
         players_->SetHealth(players_->GetMaximumHealth());
         healthBaseline_ = players_->GetHealth();
-        return true;
+        const auto* local = multiplayer_->Contexts().players.localHero.CurrentState();
+        return local != nullptr && SwarmDamagedPlayer(local->actorId);
     }
 
     float CutsceneAcceptanceDriver::DistanceToRemote() const noexcept
@@ -330,9 +410,31 @@ namespace fable::automation::multiplayer::features
         }
         auto& contexts = multiplayer_->Contexts();
         auto& cutsceneSync = contexts.world.cutsceneSync;
+        if (!host_ && phase >= Phase::AwaitCutsceneEnd)
+        {
+            bool found = false;
+            for (const auto& record : contexts.entities.entityLifecycle.Directory().Snapshot())
+            {
+                if (record.lootExperience != 20) continue;
+                const auto* live = contexts.entities.entityPresence.LiveEntities().Find(record.thingUid);
+                void* orb = live != nullptr ? game::entity::native::ThingComponentAccess::Find(live->thing,
+                    static_cast<game::entity::native::ThingComponentType>(0x69)) : nullptr;
+                found = record.live && orb != nullptr;
+                if (!orbReplicaSeen_ && found && record.lootExperience == 20 && ReadOrbAmount(orb) == 20)
+                {
+                    orbReplicaSeen_ = true;
+                    diagnostics_.Event("ExperienceOrbReplicaReady", "canonical native orb amount20 visible on guest");
+                }
+            }
+            if (orbReplicaSeen_ && !found && !orbReplicaRemoved_)
+            {
+                orbReplicaRemoved_ = true;
+                diagnostics_.Event("ExperienceOrbReplicaRemoved", "host collection removed the guest orb");
+            }
+        }
         // The quest start card that follows the cutscene pauses the world
         // until the player accepts it; accept it like Enter would.
-        if (phase >= Phase::AwaitCutsceneEnd && phase < Phase::Done &&
+        if (!host_ && phase >= Phase::AwaitCutsceneEnd && phase < Phase::Done &&
             AcceptQuestCard(contexts.players.localHero.NativeHero()))
         {
             diagnostics_.Event("CutsceneAcceptanceQuestCardAccepted", host_ ? "role=host" : "role=guest");
@@ -441,13 +543,37 @@ namespace fable::automation::multiplayer::features
 
         case Phase::HostToWasp:
         {
+            if (orbProbeUid_ == 0)
+            {
+                const auto* state = contexts.players.localHero.CurrentState();
+                if (state == nullptr) return false;
+                auto position = state->position;
+                position.x += 10;
+                game::Entity* orb = entities_->CreateExperienceOrb(position, 20);
+                if (orb == nullptr || !orb->IsValid()) { if (orb) orb->Release(); Fail("native-orb-probe-spawn-failed"); return false; }
+                void* component = game::entity::native::ThingComponentAccess::Find(entities_->ResolveNative(orb->NativeHandle()),
+                    static_cast<game::entity::native::ThingComponentType>(0x69));
+                const bool assigned = SetOrbAmount(component, 20);
+                orbProbeUid_ = orb->GetUid();
+                orb->Release();
+                if (!assigned) { Fail("native-orb-probe-amount-failed"); return false; }
+                orbCollectAt_ = now + 4000;
+                diagnostics_.Event("ExperienceOrbProbeSpawned", "native orb amount20 created away from Hero");
+                return true;
+            }
+            if (now < orbCollectAt_) return false;
+            if (orbCollectAt_ != 0)
+            {
+                if (!contexts.actions.killExperience.CollectOrbForAcceptance(orbProbeUid_)) return false;
+                orbCollectAt_ = 0;
+            }
             float position[3] = {};
             if (!FindWasp(waspUid_, position))
             {
-                if (now - phaseStartedAt_ > 30'000) Fail("no-locally-simulated-wasp");
+                if (now - phaseStartedAt_ > 30'000) Fail("no-corpse-swarm-with-two-living-wasps");
                 return false;
             }
-            TeleportLocalHero(position, "host-to-wasp");
+            TeleportLocalHero(position, "host-to-corpse-swarm");
             nextWaspTeleportAt_ = now + WaspTeleportMilliseconds;
             char detail[96] = {};
             std::snprintf(detail, sizeof(detail), "wasp_uid=%016llX", static_cast<unsigned long long>(waspUid_));
@@ -460,36 +586,43 @@ namespace fable::automation::multiplayer::features
         {
             const auto* const local = contexts.players.localHero.CurrentState();
             if (local != nullptr &&
-                contexts.actions.entityActions.IsAnyEngagedWith(local->actorId, now, EngagementWindowMilliseconds) &&
+                SwarmDamagedPlayer(local->actorId) &&
                 LocalHeroWasHit())
             {
                 char detail[96] = {};
                 std::snprintf(detail, sizeof(detail), "target=host players_apart=%.1f", DistanceToRemote());
                 diagnostics_.Event("EnemyTestWaspAttacked", detail);
-                // Quest wasps are leashed to their nest, so the players swap
-                // places instead of moving the wasp: the host takes the
-                // guest's spot and the guest comes to the wasp.
                 std::uint64_t guestActor = 0;
-                float guestAt[3] = {};
-                if (!RemoteHost(guestActor, guestAt))
-                {
-                    Fail("guest-position-unknown");
-                    return false;
-                }
-                guestAt[0] += 2.0f;
-                TeleportLocalHero(guestAt, "host-to-guest-spot");
-                diagnostics_.Event("EnemyTestHostToGuestSpot", "the guest goes to the wasp");
-                Enter(Phase::HostAwaitGuestAttacked, now);
+                if (!RemoteHost(guestActor, retreatAt_)) { Fail("guest-position-unknown"); return false; }
+                retreatAt_[0] += 2.0f;
+                Enter(Phase::HostAwaitGuestReady, now);
                 return true;
             }
             // Wasps fly about; stay at the wasp until it hits.
             if (now >= nextWaspTeleportAt_)
             {
                 float position[3] = {};
-                if (WaspPosition(position)) TeleportLocalHero(position, "host-follows-wasp");
+                if (WaspPosition(position)) TeleportLocalHero(position, "host-holds-swarm-center");
                 nextWaspTeleportAt_ = now + WaspTeleportMilliseconds;
             }
             return false;
+        }
+
+        case Phase::HostAwaitGuestReady:
+        {
+            if (DistanceToRemote() < 0 || DistanceToRemote() > NearDistance) return false;
+            const auto* local = contexts.players.localHero.CurrentState();
+            std::uint64_t guest = 0; float at[3] = {};
+            if (local == nullptr || !RemoteHost(guest, at)) return false;
+            if (contexts.actions.enemyTargets.NativeTargetCount(local->actorId) == 0 ||
+                contexts.actions.enemyTargets.NativeTargetCount(guest) == 0) { balancedSince_ = 0; return false; }
+            if (balancedSince_ == 0) balancedSince_ = now;
+            if (now - balancedSince_ < 1000) return false;
+            diagnostics_.Event("EnemyTestSwarmDistributed", "native enemy getters target both living players concurrently");
+            TeleportLocalHero(retreatAt_, "host-leaves-occupied-swarm");
+            diagnostics_.Event("EnemyTestHostToGuestSpot", "guest already present; host retreats");
+            Enter(Phase::HostAwaitGuestAttacked, now);
+            return true;
         }
 
         case Phase::HostAwaitGuestAttacked:
@@ -497,7 +630,7 @@ namespace fable::automation::multiplayer::features
             std::uint64_t guestActor = 0;
             float guestAt[3] = {};
             if (!RemoteHost(guestActor, guestAt)) return false;
-            if (contexts.actions.entityActions.IsAnyEngagedWith(guestActor, now, EngagementWindowMilliseconds))
+            if (SwarmDamagedPlayer(guestActor))
             {
                 char detail[96] = {};
                 std::snprintf(detail, sizeof(detail), "target=guest players_apart=%.1f", DistanceToRemote());
@@ -510,29 +643,28 @@ namespace fable::automation::multiplayer::features
 
         case Phase::HostAwaitGuestArrival:
         {
-            // The guest comes to the host once it has been hit.
-            const float apart = DistanceToRemote();
-            if (apart < 0.0f || apart > NearDistance) return false;
-            float position[3] = {};
-            if (!WaspPosition(position))
-            {
-                Fail("wasp-lost");
-                return false;
-            }
-            TeleportLocalHero(position, "host-back-to-wasp");
-            diagnostics_.Event("EnemyTestHostBackToWasp", "players swapped");
+            std::uint64_t guestActor = 0;
+            float guestAt[3] = {};
+            if (!RemoteHost(guestActor, guestAt)) return false;
+            TeleportLocalHero(guestAt, "host-returns-before-guest-leaves");
+            diagnostics_.Event("EnemyTestHostBackToWasp", "host joins the guest before the second handoff");
+            Enter(Phase::HostAwaitGuestDeparture, now);
+            return true;
+        }
+        case Phase::HostAwaitGuestDeparture:
+            if (DistanceToRemote() <= 2.0f * NearDistance) return false;
+            players_->SetHealth(players_->GetMaximumHealth());
             healthBaseline_ = players_->GetHealth();
             nextWaspTeleportAt_ = now + WaspTeleportMilliseconds;
             Enter(Phase::HostAwaitWaspAttackAgain, now);
             return true;
-        }
 
         case Phase::HostAwaitWaspAttackAgain:
         {
             const auto* const local = contexts.players.localHero.CurrentState();
             // Only a hit after the host came back counts, not the first one.
             if (local != nullptr && now - phaseStartedAt_ >= 500 &&
-                contexts.actions.entityActions.IsAnyEngagedWith(local->actorId, now, now - phaseStartedAt_) &&
+                SwarmDamagedPlayer(local->actorId) &&
                 LocalHeroWasHit())
             {
                 char detail[96] = {};
@@ -544,7 +676,7 @@ namespace fable::automation::multiplayer::features
             if (now >= nextWaspTeleportAt_)
             {
                 float position[3] = {};
-                if (WaspPosition(position)) TeleportLocalHero(position, "host-follows-wasp");
+                if (WaspPosition(position)) TeleportLocalHero(position, "host-holds-swarm-center");
                 nextWaspTeleportAt_ = now + WaspTeleportMilliseconds;
             }
             return false;
@@ -557,26 +689,38 @@ namespace fable::automation::multiplayer::features
             float hostAt[3] = {};
             if (!RemoteHost(hostActor, hostAt)) return false;
             const float apart = DistanceToRemote();
-            if (apart > 2.0f * NearDistance)
+            if (apart <= 2.0f * NearDistance) return false;
+            if (!swarmSelected_)
             {
-                for (int axis = 0; axis < 3; ++axis) hostFightAt_[axis] = hostAt[axis];
-                hostFightSeen_ = true;
-                return false;
+                float selected[3] = {};
+                if (!FindWaspNear(hostAt, waspUid_, selected)) return false;
             }
-            if (!hostFightSeen_ || apart < 0.0f || apart > NearDistance) return false;
+            if (!SwarmDamagedPlayer(hostActor)) return false;
+            for (int axis = 0; axis < 3; ++axis) hostFightAt_[axis] = hostAt[axis];
             float position[3] = {};
             if (!FindWaspNear(hostFightAt_, waspUid_, position))
             {
                 Fail("guest-sees-no-wasp");
                 return false;
             }
-            TeleportLocalHero(position, "guest-to-wasp");
+            TeleportLocalHero(hostAt, "guest-joins-occupied-corpse-swarm");
             char detail[96] = {};
             std::snprintf(detail, sizeof(detail), "wasp_uid=%016llX", static_cast<unsigned long long>(waspUid_));
             diagnostics_.Event("EnemyTestGuestNearWasp", detail);
             players_->SetHealth(players_->GetMaximumHealth());
             healthBaseline_ = players_->GetHealth();
             nextWaspTeleportAt_ = now + WaspTeleportMilliseconds;
+            Enter(Phase::GuestAwaitHostRetreat, now);
+            return true;
+        }
+
+        case Phase::GuestAwaitHostRetreat:
+        {
+            if (DistanceToRemote() <= 2.0f * NearDistance) return false;
+            std::uint64_t actor = 0;
+            if (!RemoteHost(actor, retreatAt_)) return false;
+            players_->SetHealth(players_->GetMaximumHealth());
+            healthBaseline_ = players_->GetHealth();
             Enter(Phase::GuestAwaitHit, now);
             return true;
         }
@@ -589,7 +733,7 @@ namespace fable::automation::multiplayer::features
                 if (now >= nextWaspTeleportAt_)
                 {
                     float position[3] = {};
-                    if (WaspPosition(position)) TeleportLocalHero(position, "guest-follows-wasp");
+                    if (WaspPosition(position)) TeleportLocalHero(position, "guest-holds-swarm-center");
                     nextWaspTeleportAt_ = now + WaspTeleportMilliseconds;
                 }
                 return false;
@@ -604,8 +748,40 @@ namespace fable::automation::multiplayer::features
                 Fail("host-position-unknown");
                 return false;
             }
-            TeleportLocalHero(hostAt, "guest-to-host");
-            diagnostics_.Event("EnemyTestGuestMovedToHost", "guest moved to the host");
+            Enter(Phase::GuestAwaitHostReturn, now);
+            return true;
+        }
+
+        case Phase::GuestAwaitHostReturn:
+            if (DistanceToRemote() < 0 || DistanceToRemote() > NearDistance) return false;
+            TeleportLocalHero(retreatAt_, "guest-leaves-occupied-swarm");
+            diagnostics_.Event("EnemyTestGuestMovedToHost", "host already present; guest retreats");
+            Enter(Phase::GuestFlaskProbe, now);
+            return true;
+
+        case Phase::GuestFlaskProbe:
+        {
+            if (now - phaseStartedAt_ < 1000) return false;
+            void* hero = contexts.players.localHero.NativeHero();
+            flaskBaseline_ = FlaskCount(hero, true);
+            if (flaskBaseline_ <= 0) { Fail("flask-probe-inventory-unavailable"); return false; }
+            if (!contexts.actions.playerDeath.IsReady()) { Fail("native-death-hook-unavailable"); return false; }
+            // A real lethal owned-health mutation; the normal native death
+            // coordinator/retail path must consume the item and recover.
+            if (!contexts.actions.playerDeath.DamageForAcceptance(hero, players_->GetMaximumHealth() * 2))
+            { Fail("flask-probe-damage-rejected"); return false; }
+            Enter(Phase::GuestAwaitFlaskRecovery, now);
+            return true;
+        }
+        case Phase::GuestAwaitFlaskRecovery:
+        {
+            void* hero = contexts.players.localHero.NativeHero();
+            if (DeathCardOpen(hero) || ModalTutorialOpen()) { Fail("flask-showed-modal-death-card-or-tutorial"); return false; }
+            if (players_->GetHealth() <= 0.01f) return false;
+            const int remaining = FlaskCount(hero);
+            if (remaining != flaskBaseline_ - 1) { Fail("flask-not-consumed-exactly-once"); return false; }
+            if (now - phaseStartedAt_ < 6000) return false;
+            diagnostics_.Event("ResurrectionFlaskAcceptancePassed", "one native flask consumed; positive health; no modal death card");
             Enter(Phase::Done, now);
             return true;
         }

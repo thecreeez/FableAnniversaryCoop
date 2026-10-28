@@ -37,7 +37,9 @@ namespace fable::automation::multiplayer::features
             Settle,
             Roll,
             Block,
+            CombatStance,
             StatExperience,
+            SmallExperience,
             KillExperience,
             QuestCard,
             Done,
@@ -55,6 +57,7 @@ namespace fable::automation::multiplayer::features
         core::Diagnostics diagnostics_ = {};
         std::atomic<Phase> phase_{Phase::WaitingForWorld};
         std::uint64_t phaseStartedAt_ = 0;
+        unsigned smallAwards_ = 0;
         bool host_ = false;
         bool enabled_ = false;
     };

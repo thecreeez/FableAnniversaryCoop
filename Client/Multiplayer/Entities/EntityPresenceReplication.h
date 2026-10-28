@@ -76,5 +76,6 @@ namespace fable::multiplayer::entities
         unsigned int identityCollisionCount_ = 0;
         bool baselineRequired_ = true;
         bool initialized_ = false;
+        std::uint64_t nextLootRefreshAt_ = 0;
     };
 }

@@ -66,11 +66,13 @@ namespace fable::multiplayer::movement
             const entities::LiveEntityRegistry& liveEntities,
             const std::string& localMap,
             bool ownerRosterReady,
-            std::uint64_t observerReadinessRevision);
+            std::uint64_t observerReadinessRevision,
+            bool cinematicActive);
         void Drive();
         void Shutdown() noexcept;
 
     private:
+        std::atomic_bool cinematicActive_{false};
         static constexpr std::size_t CaptureCapacity = 4096;
         static constexpr std::uint64_t PublishIntervalMilliseconds = 50;
         static constexpr std::uint64_t DeferredSampleLifetimeMilliseconds =
@@ -106,10 +108,12 @@ namespace fable::multiplayer::movement
 
         struct Playback final
         {
+            EntityMovementReplication* replication = nullptr;
             ReplicatedActorMovement movement;
             void* nativeThing = nullptr;
             std::uint32_t generation = 0;
             std::uint64_t ownerActorId = 0;
+            std::uint32_t simulationEpoch = 0;
             std::uint32_t mapEpoch = 0;
             std::uint32_t sequence = 0;
         };

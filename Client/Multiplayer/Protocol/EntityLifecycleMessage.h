@@ -58,6 +58,9 @@ namespace fable::multiplayer::protocol
     {
         EntityLifecycleOperation operation =
             EntityLifecycleOperation::ObservePresent;
+        bool groundLoot = false;
+        std::int32_t lootGold = 0;
+        std::int32_t lootExperience = 0;
         std::uint8_t flags = 0;
         std::uint64_t entityUid = 0;
         std::uint64_t villageUid = 0;

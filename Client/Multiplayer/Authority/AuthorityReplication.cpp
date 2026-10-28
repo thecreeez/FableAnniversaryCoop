@@ -43,6 +43,14 @@ namespace fable::multiplayer::authority
         {
             return false;
         }
+        const auto preparationNow = GetTickCount64();
+        for (auto it = simulationPreparations_.begin(); it != simulationPreparations_.end();)
+        {
+            const auto* lease = maps_.Find(it->second.message.mapName);
+            it = lease == nullptr || lease->epoch != it->second.message.mapEpoch ||
+                preparationNow - it->second.startedAt > 5000
+                ? simulationPreparations_.erase(it) : std::next(it);
+        }
         mapIdentities_.Reconcile(localPlayer, remotePlayers);
         PlayerState canonicalLocalState;
         const PlayerState* canonicalLocal = localPlayer;
@@ -74,7 +82,7 @@ namespace fable::multiplayer::authority
         }
         if (role_ != PeerRole::Host)
         {
-            return true;
+            return PublishSimulationAssignments();
         }
 
         const std::uint64_t peerRevision = transport_->PeerSetRevision();
@@ -95,6 +103,23 @@ namespace fable::multiplayer::authority
         {
             maps_.QueueBaseline();
             actions_.QueueBaseline();
+            // Late joiners need per-NPC overrides as well as map ownership.
+            // Otherwise their AI gate falls back to the map owner indefinitely.
+            for (const auto& entry : simulationAssignments_)
+            {
+                const auto* lease = maps_.Find(entry.second.mapName);
+                if (lease == nullptr || lease->epoch != entry.second.mapEpoch) continue;
+                protocol::AuthorityMessage baseline;
+                baseline.operation = protocol::AuthorityOperation::Grant;
+                baseline.scope = protocol::AuthorityScope::EntitySimulation;
+                baseline.entityUid = entry.first.thingUid;
+                baseline.entityGeneration = entry.first.generation;
+                baseline.ownerActorId = entry.second.actorId;
+                baseline.mapEpoch = entry.second.mapEpoch;
+                baseline.actionEpoch = entry.second.epoch;
+                baseline.mapName = entry.second.mapName;
+                pendingSimulationAssignments_.push_back(std::move(baseline));
+            }
         }
         knownPeerRevision_ = peerRevision;
 
@@ -262,6 +287,30 @@ namespace fable::multiplayer::authority
             diagnostics_.Event(
                 "MultiplayerAuthorityMessageRejected",
                 "invalid authority payload");
+            return true;
+        }
+        if (message.scope == protocol::AuthorityScope::EntitySimulation &&
+            message.operation == protocol::AuthorityOperation::Prepared)
+        {
+            if (role_ != PeerRole::Host || message.ownerActorId != transportMessage.sourceActorId) return true;
+            const EntityAuthorityKey key{message.entityUid, message.entityGeneration};
+            auto prepared = simulationPreparations_.find(key);
+            if (prepared == simulationPreparations_.end()) return true;
+            const auto& wanted = prepared->second.message;
+            if (wanted.actionEpoch != message.actionEpoch || wanted.ownerActorId != message.ownerActorId ||
+                wanted.mapEpoch != message.mapEpoch || wanted.mapName != message.mapName) return true;
+            const auto* lease = maps_.Find(message.mapName);
+            if (lease == nullptr || lease->epoch != message.mapEpoch) { simulationPreparations_.erase(prepared); return true; }
+            message.operation = protocol::AuthorityOperation::Grant;
+            if (ApplySimulationAssignment(message)) pendingSimulationAssignments_.push_back(message);
+            simulationPreparations_.erase(key);
+            return true;
+        }
+        if (message.scope == protocol::AuthorityScope::EntitySimulation &&
+            message.operation == protocol::AuthorityOperation::Prepare)
+        {
+            if (role_ != PeerRole::Host && message.ownerActorId == localActorId_)
+                simulationPreparations_[{message.entityUid, message.entityGeneration}] = {message, GetTickCount64()};
             return true;
         }
         if (role_ == PeerRole::Host)
@@ -946,11 +995,15 @@ namespace fable::multiplayer::authority
         message.mapEpoch = mapEpoch;
         message.actionEpoch = ++nextSimulationEpoch_;
         message.mapName = mapName;
-        if (!ApplySimulationAssignment(message))
-        {
-            return false;
-        }
-        pendingSimulationAssignments_.push_back(std::move(message));
+        const auto pending = simulationPreparations_.find(entity);
+        if (pending != simulationPreparations_.end() &&
+            pending->second.message.ownerActorId == actorId &&
+            pending->second.message.mapEpoch == mapEpoch &&
+            GetTickCount64() - pending->second.startedAt < 3000) return true;
+        message.operation = protocol::AuthorityOperation::Prepare;
+        diagnostics_.Event("MultiplayerNpcHandoffPreparing", "old lease retained until destination binding acknowledges");
+        simulationPreparations_[entity] = {message, GetTickCount64()};
+        if (actorId != localActorId_) pendingSimulationAssignments_.push_back(std::move(message));
         return true;
     }
 
@@ -1007,6 +1060,29 @@ namespace fable::multiplayer::authority
             message.mapEpoch, message.actionEpoch, message.ownerActorId == localActorId_ ? 1 : 0);
         diagnostics_.Event("MultiplayerEntitySimulationAssigned", detail);
         return true;
+    }
+
+    void AuthorityReplication::ObserveReadyEntity(const EntityAuthorityKey& entity,
+        const std::string& mapName, std::uint32_t mapEpoch)
+    {
+        auto pending = simulationPreparations_.find(entity);
+        if (pending == simulationPreparations_.end()) return;
+        auto message = pending->second.message;
+        if (message.ownerActorId != localActorId_ || message.mapName != mapName || message.mapEpoch != mapEpoch) return;
+        const auto* lease = maps_.Find(mapName);
+        if (lease == nullptr || lease->epoch != mapEpoch) { simulationPreparations_.erase(pending); return; }
+        if (role_ == PeerRole::Host)
+        {
+            message.operation = protocol::AuthorityOperation::Grant;
+            if (ApplySimulationAssignment(message)) pendingSimulationAssignments_.push_back(message);
+        }
+        else
+        {
+            message.operation = protocol::AuthorityOperation::Prepared;
+            pendingSimulationAssignments_.push_back(message);
+        }
+        diagnostics_.Event("MultiplayerNpcHandoffBindingReady", "exact canonical incarnation is bound locally");
+        simulationPreparations_.erase(entity);
     }
 
     bool AuthorityReplication::PublishSimulationAssignments()
@@ -1085,6 +1161,7 @@ namespace fable::multiplayer::authority
         actions_.Clear();
         simulationAssignments_.clear();
         pendingSimulationAssignments_.clear();
+        simulationPreparations_.clear();
         nextSimulationEpoch_ = 0;
         ++simulationRevision_;
         mapIdentities_.Clear();

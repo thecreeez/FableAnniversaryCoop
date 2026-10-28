@@ -174,6 +174,7 @@ namespace fable::multiplayer::entities
         std::unordered_map<std::uint16_t, std::string> definitionNames_;
         unsigned int diagnosticCount_ = 0;
         bool rosterReady_ = false;
+        bool localPopulationOwner_ = false;
         bool initialized_ = false;
     };
 }

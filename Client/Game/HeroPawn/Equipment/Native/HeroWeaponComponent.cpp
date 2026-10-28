@@ -1,3 +1,6 @@
+#include <intrin.h>
+#include "Core/Hooking/CodePatch.h"
+#include <unordered_map>
 #include "HeroWeaponComponent.h"
 
 #include "Game/Creature/Equipment/Native/CreatureWeaponNativeSupport.h"
@@ -17,6 +20,60 @@
 
 namespace
 {
+    // Retail idle selection calls CTCCombat::WantsCombatIdle. It also reads
+    // process-local Hero modes, so a proxy must use its owner's durable state.
+    constexpr std::uintptr_t CombatStanceRva = 0x01958A10;
+    fable::core::hooking::InlineHook combatStanceHook;
+    fable::core::hooking::CodePatch combatIdleEligibilityPatch;
+    using CombatStanceFn = bool(__thiscall*)(void*);
+    CombatStanceFn originalCombatStance = nullptr;
+    SRWLOCK combatStanceLock = SRWLOCK_INIT;
+    std::unordered_map<void*, bool> remoteCombatStances;
+
+    void* CombatOwner(void* component) noexcept
+    {
+        __try { return component != nullptr ? *reinterpret_cast<void**>(static_cast<unsigned char*>(component) + 4) : nullptr; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+    }
+
+    bool __fastcall ReadReplicatedCombatStance(void* component, void*)
+    {
+        void* owner = CombatOwner(component);
+        AcquireSRWLockShared(&combatStanceLock);
+        const auto found = remoteCombatStances.find(owner);
+        const bool registered = found != remoteCombatStances.end();
+        const bool active = registered && found->second;
+        ReleaseSRWLockShared(&combatStanceLock);
+        return registered ? active : originalCombatStance(component);
+    }
+
+    bool __fastcall RemoteIdleEligibility(void* creature, void*)
+    {
+        // CThingAICreature::vf83 normally returns false, excluding RivalHero
+        // proxies before CTCCombat is even queried. Limit the exception to
+        // this one native idle selector; all other callers retain false.
+        const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+        const auto caller = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+        if (caller < base + 0x01819440 || caller >= base + 0x01819834) return false;
+        AcquireSRWLockShared(&combatStanceLock);
+        const bool registered = remoteCombatStances.find(creature) != remoteCombatStances.end();
+        ReleaseSRWLockShared(&combatStanceLock);
+        return registered;
+    }
+
+    bool ReadNativeCombatStance(void* creature) noexcept
+    {
+        using namespace fable::game::entity::native;
+        void* component = ThingComponentAccess::Find(creature, static_cast<ThingComponentType>(0x30));
+        if (component == nullptr) return false;
+        __try
+        {
+            const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+            return reinterpret_cast<CombatStanceFn>(base + CombatStanceRva)(component);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
     constexpr std::size_t kMeleePointerOffset = 0x188;
     constexpr std::size_t kRangedPointerOffset = 0x195;
     constexpr std::size_t kMeleeDefinitionOffset = 0x1B8;
@@ -453,6 +510,45 @@ namespace fable::game::hero_pawn::equipment::native
         return requested;
     }
 
+    bool HeroWeaponComponent::ReadCombatStance(void* creature) noexcept
+    {
+        return ReadNativeCombatStance(creature);
+    }
+
+    bool HeroWeaponComponent::SetRemoteCombatStance(void* creature, bool active) noexcept
+    {
+        if (creature == nullptr) return false;
+        if (!combatStanceHook.IsInstalled())
+        {
+            const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+            constexpr unsigned char expected[] = {0x56, 0x8B, 0xF1, 0x8B, 0x4E, 0x04};
+            if (!combatStanceHook.Install(reinterpret_cast<void*>(base + CombatStanceRva),
+                expected, sizeof(expected), reinterpret_cast<void*>(&ReadReplicatedCombatStance), sizeof(expected))) return false;
+            originalCombatStance = reinterpret_cast<CombatStanceFn>(combatStanceHook.Original());
+        }
+        if (!combatIdleEligibilityPatch.IsInstalled())
+        {
+            const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+            void* expected = reinterpret_cast<void*>(base + 0x01329130);
+            void* replacement = reinterpret_cast<void*>(&RemoteIdleEligibility);
+            if (!combatIdleEligibilityPatch.Install(reinterpret_cast<void*>(base + 0x02B1AFE4 + 83 * sizeof(void*)),
+                &expected, sizeof(expected), &replacement, sizeof(replacement))) return false;
+        }
+        AcquireSRWLockExclusive(&combatStanceLock);
+        bool stored = true;
+        try { remoteCombatStances[creature] = active; }
+        catch (...) { stored = false; }
+        ReleaseSRWLockExclusive(&combatStanceLock);
+        return stored;
+    }
+
+    void HeroWeaponComponent::ClearRemoteCombatStance(void* creature) noexcept
+    {
+        AcquireSRWLockExclusive(&combatStanceLock);
+        remoteCombatStances.erase(creature);
+        ReleaseSRWLockExclusive(&combatStanceLock);
+    }
+
     bool HeroWeaponComponent::Capture(
         void* nativeThing,
         HeroEquipmentState& state) noexcept
@@ -469,6 +565,7 @@ namespace fable::game::hero_pawn::equipment::native
         state.meleeAttachmentSlot = inspection.meleeAttachmentSlot;
         state.rangedAttachmentSlot = inspection.rangedAttachmentSlot;
         state.activeFamily = inspection.activeFamily;
+        state.combatStance = ReadNativeCombatStance(nativeThing);
         state.valid = true;
         return state.IsSane();
     }

@@ -46,15 +46,27 @@ namespace fable::launcher::multiplayer
         // loses health, then the host again after the players swap.
         const bool enemies = played &&
             peers.WaitEvent(host, "CutsceneAcceptanceCutsceneOver") &&
+            peers.WaitEvent(host, "EnemyTestCorpseSwarmSelected") &&
             peers.WaitEvent(host, "EnemyTestHostNearWasp") &&
+            peers.WaitEvent(host, "QuestScreenClosedByOwner") &&
+            peers.WaitEventDetail(guest, "MultiplayerScriptedEntityMovementBound", "script=WaspVictim") &&
             peers.WaitEventDetail(host, "EnemyTestWaspAttacked", "target=host ") &&
+            peers.WaitEvent(host, "EnemyTestSwarmDistributed") &&
+            peers.WaitEvent(host, "MultiplayerNativeEnemyTargetRead") &&
+            peers.WaitEvent(guest, "ExperienceOrbReplicaReady") &&
+            peers.WaitEvent(guest, "ExperienceOrbReplicaRemoved") &&
+            peers.WaitEvent(host, "ExperienceOrbCollected") &&
             peers.WaitEvent(host, "EnemyTestHostToGuestSpot") &&
+            peers.WaitEvent(guest, "EnemyTestCorpseSwarmSelected") &&
             peers.WaitEvent(guest, "EnemyTestGuestNearWasp") &&
             peers.WaitEventDetail(host, "EnemyTestWaspAttacked", "target=guest") &&
             peers.WaitEvent(guest, "EnemyTestGuestHurt") &&
             peers.WaitEvent(guest, "EnemyTestGuestMovedToHost") &&
             peers.WaitEvent(host, "EnemyTestHostBackToWasp") &&
-            peers.WaitEventDetail(host, "EnemyTestWaspAttacked", "target=host-again");
+            peers.WaitEventDetail(host, "EnemyTestWaspAttacked", "target=host-again") &&
+            peers.WaitEvent(guest, "ResurrectionFlaskAcceptancePassed") &&
+            peers.WaitEvent(guest, "MultiplayerResurrectionFlaskConsumedNoPause") &&
+            peers.WaitEvent(guest, "MultiplayerResurrectionTutorialSuppressed");
         const bool noDriverFailure = enemies &&
             !diagnostics::EventWasReported(diagnostics::ReadEventFile(host.events), "CutsceneAcceptanceFailed") &&
             !diagnostics::EventWasReported(diagnostics::ReadEventFile(guest.events), "CutsceneAcceptanceFailed");
@@ -69,7 +81,7 @@ namespace fable::launcher::multiplayer
                     : !cancelled ? L"dismissing the waiting box did not cancel and move the host back"
                     : !notPlayedEarly ? L"the cutscene played before everyone gathered"
                     : !played ? L"the gathered cutscene did not play on both peers"
-                    : !enemies ? L"a wasp did not attack the host, then the guest, then the host again"
+                    : !enemies ? L"the selected corpse swarms did not damage the host, then the guest, then the host again"
                     : !noDriverFailure ? L"the acceptance driver reported a failure"
                     : !responsive ? L"a peer stopped responding"
                     : L"shutdown was not clean")

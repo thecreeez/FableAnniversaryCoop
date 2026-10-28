@@ -1,3 +1,4 @@
+#include "Multiplayer/Authority/AuthorityReplication.h"
 #include "QuestEventReplicationService.h"
 
 #include "Multiplayer/Runtime/MultiplayerSessionContexts.h"
@@ -30,6 +31,7 @@ namespace
         case QuestEventOperation::Complete: return "complete";
         case QuestEventOperation::Fail: return "fail";
         case QuestEventOperation::ShowQuestScreen: return "show-quest-screen";
+        case QuestEventOperation::CloseQuestScreen: return "close-quest-screen";
         }
         return "unknown";
     }
@@ -121,6 +123,11 @@ namespace fable::multiplayer::persistence
     {
         hook_.SetDuplicateFilter(nullptr, nullptr);
         screenHook_.Shutdown();
+        pendingCloses_.clear();
+        screenShownAt_.clear();
+        screenAuthority_ = nullptr;
+        screenHero_ = nullptr;
+        screenMapId_ = 0;
         hook_.Shutdown();
         transport_ = nullptr;
         diagnostics_ = {};
@@ -145,6 +152,16 @@ namespace fable::multiplayer::persistence
         while (hook_.PopObservation(observation))
         {
             if (!PublishLocal(observation)) return false;
+        }
+        screenHook_.Poll(screenHero_);
+        const auto screenNow = GetTickCount64();
+        for (auto it = pendingCloses_.begin(); it != pendingCloses_.end(); )
+        {
+            const auto* lease = screenAuthority_ != nullptr ? screenAuthority_->FindMapLease(it->second.mapId) : nullptr;
+            if (screenNow - it->second.receivedAt > 15000 || screenMapId_ != it->second.mapId ||
+                lease == nullptr || lease->epoch != it->second.epoch || screenHook_.Close(screenHero_, it->first.c_str()))
+                it = pendingCloses_.erase(it);
+            else ++it;
         }
         QuestScreenHook::Observation screen;
         while (screenHook_.PopObservation(screen))
@@ -217,6 +234,23 @@ namespace fable::multiplayer::persistence
 
     bool QuestEventReplicationService::PublishScreen(const QuestScreenHook::Observation& observation)
     {
+        if (observation.closed)
+        {
+            const auto* lease = screenAuthority_ != nullptr ? screenAuthority_->FindMapLease(screenMapId_) : nullptr;
+            if (lease == nullptr || observation.name.empty() ||
+                observation.name.size() >= protocol::MaximumQuestEventNameBytes) return true;
+            QuestEventMessage close;
+            close.operation = QuestEventOperation::CloseQuestScreen;
+            close.nameLength = static_cast<std::uint8_t>(observation.name.size());
+            std::memcpy(close.name, observation.name.data(), observation.name.size());
+            close.arguments[0] = screenMapId_;
+            close.arguments[1] = lease->epoch;
+            close.revision = ++nextRevision_;
+            if (outbound_.size() >= PendingLimit) return false;
+            outbound_.push_back(close);
+            Report("MultiplayerQuestScreenOwnerConfirmed", close, localActorId_, "any-player-close-on-map-peers");
+            return true;
+        }
         if (observation.name.empty() || observation.name.size() >= protocol::MaximumQuestEventNameBytes)
         {
             return true;
@@ -348,7 +382,8 @@ namespace fable::multiplayer::persistence
         // This build exposes no failed predicate (slot 302 is a constant
         // false), so a fail is replayed only while the quest is running here.
         case QuestEventOperation::Fail: return active && !completed;
-        case QuestEventOperation::ShowQuestScreen: return true;
+        case QuestEventOperation::ShowQuestScreen:
+        case QuestEventOperation::CloseQuestScreen: return true;
         }
         return false;
     }
@@ -357,6 +392,26 @@ namespace fable::multiplayer::persistence
     {
         if (!hook_.IsManagerReady()) return false;
         const QuestEventMessage& message = pending.message;
+        if (message.operation == QuestEventOperation::CloseQuestScreen)
+        {
+            const auto* lease = screenAuthority_ != nullptr ? screenAuthority_->FindMapLease(
+                static_cast<std::uint16_t>(message.arguments[0])) : nullptr;
+            if (lease == nullptr || lease->epoch != message.arguments[1] ||
+                message.arguments[0] > 0xFFFF)
+            {
+                Report("MultiplayerQuestEventRejected", message, pending.sourceActorId, "stale-map-screen");
+                return true;
+            }
+            if (message.arguments[0] == screenMapId_ && pendingCloses_.size() < PendingLimit)
+                pendingCloses_[message.name] = {GetTickCount64(), screenMapId_, lease->epoch};
+            if (pending.rebroadcast && outbound_.size() < PendingLimit)
+            {
+                auto relay = message;
+                relay.revision = ++nextRevision_;
+                outbound_.push_back(relay);
+            }
+            return true;
+        }
         if (message.operation == QuestEventOperation::ShowQuestScreen)
         {
             void* const scriptInterface = scriptInterface_ != nullptr ? *scriptInterface_ : nullptr;

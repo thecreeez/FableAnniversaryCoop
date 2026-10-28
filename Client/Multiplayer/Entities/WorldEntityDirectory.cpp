@@ -56,6 +56,9 @@ namespace fable::multiplayer::entities
         observed.hasTransform = change.record.hasTransform;
         observed.gamePersistent = change.record.gamePersistent;
         observed.levelPersistent = change.record.levelPersistent;
+        observed.groundLoot = change.record.groundLoot;
+        observed.lootGold = change.record.lootGold;
+        observed.lootExperience = change.record.lootExperience;
         observed.creature = change.record.creature;
         observed.hasVillageMembership =
             change.record.hasVillageMembership;
@@ -123,6 +126,9 @@ namespace fable::multiplayer::entities
         observed.levelPersistent =
             (intent.flags &
                 protocol::entity_lifecycle_flag::LevelPersistent) != 0;
+        observed.groundLoot = intent.groundLoot;
+        observed.lootGold = intent.lootGold;
+        observed.lootExperience = intent.lootExperience;
         observed.creature =
             (intent.flags & protocol::entity_lifecycle_flag::Creature) != 0;
         observed.hasVillageMembership =
@@ -465,7 +471,7 @@ namespace fable::multiplayer::entities
             // live creature is a runtime birth rather than a member expected
             // from retail saved-map construction. Every same-map observer must
             // reconstruct it just like an explicit cross-map arrival.
-            created.awaitingMaterialization = present && created.creature &&
+            created.awaitingMaterialization = present && (created.creature || created.groundLoot) &&
                 HasMapRoster(created.mapId);
             created.generation = NextGeneration();
             created.worldRevision = NextWorldRevision();
@@ -506,6 +512,8 @@ namespace fable::multiplayer::entities
             current.gamePersistent != observed.gamePersistent ||
             current.levelPersistent != observed.levelPersistent ||
             current.creature != observed.creature ||
+            current.groundLoot != observed.groundLoot || current.lootGold != observed.lootGold ||
+            current.lootExperience != observed.lootExperience ||
             (observed.hasTransform &&
                 (current.position.x != observed.position.x ||
                     current.position.y != observed.position.y ||
@@ -531,6 +539,9 @@ namespace fable::multiplayer::entities
         current.mapName = observed.mapName;
         current.gamePersistent = observed.gamePersistent;
         current.levelPersistent = observed.levelPersistent;
+        current.groundLoot = observed.groundLoot;
+        current.lootGold = observed.lootGold;
+        current.lootExperience = observed.lootExperience;
         current.creature = observed.creature;
         // Existing VillageUID state is host-save truth. A new map owner may
         // have loaded a stale local save, so roster observations cannot
@@ -710,6 +721,9 @@ namespace fable::multiplayer::entities
         record.levelPersistent =
             (message.flags &
                 protocol::entity_lifecycle_flag::LevelPersistent) != 0;
+        record.groundLoot = message.groundLoot;
+        record.lootGold = message.lootGold;
+        record.lootExperience = message.lootExperience;
         record.creature =
             (message.flags & protocol::entity_lifecycle_flag::Creature) != 0;
         record.live =
@@ -1090,6 +1104,9 @@ namespace fable::multiplayer::entities
         protocol::EntityLifecycleMessage message;
         message.operation = operation;
         message.flags = Flags(record);
+        message.groundLoot = record.groundLoot;
+        message.lootGold = record.lootGold;
+        message.lootExperience = record.lootExperience;
         message.entityUid = record.thingUid;
         message.villageUid = record.hasVillageMembership
             ? record.villageUid

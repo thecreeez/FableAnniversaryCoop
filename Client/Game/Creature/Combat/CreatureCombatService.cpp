@@ -55,6 +55,48 @@ namespace
 
 namespace fable::game::creature::combat
 {
+    bool CreatureCombatService::ConsumeNativeResurrectionFlask(void* creature) noexcept
+    {
+        if (entities_ == nullptr || creature == nullptr) return false;
+        const auto base = reinterpret_cast<std::uintptr_t>(entities_->GameModule());
+        // Exact phial branch of PlayerCreature::vf16: find the inventory Thing,
+        // then CTCResurrectionItem::Use(hero). That path restores health,
+        // submits native recovery and destroys ONE item, without mode40 or
+        // QuestCompletionUI::Show(mode3), which belong to actual death.
+        constexpr std::uintptr_t FindFlaskRva = 0x019F3A54;
+        constexpr std::uintptr_t UseFlaskRva = 0x01AAD570;
+        __try
+        {
+            const auto* find = reinterpret_cast<const unsigned char*>(base + FindFlaskRva);
+            const auto* use = reinterpret_cast<const unsigned char*>(base + UseFlaskRva);
+            if (find[0] != 0x6A || find[1] != 0x28 || find[2] != 0xB8 ||
+                *reinterpret_cast<const std::uintptr_t*>(find + 3) != base + 0x025362E0 ||
+                use[0] != 0x6A || use[1] != 0xFF || use[2] != 0x68 ||
+                *reinterpret_cast<const std::uintptr_t*>(use + 3) != base + 0x02549986) return false;
+            void* inventory = entity::native::ThingComponentAccess::Find(creature,
+                static_cast<entity::native::ThingComponentType>(0x11));
+            if (inventory == nullptr) return false;
+            void* flask = reinterpret_cast<void*(__thiscall*)(void*)>(base + FindFlaskRva)(inventory);
+            if (flask == nullptr || reinterpret_cast<bool(__thiscall*)(void*)>((*static_cast<void***>(flask))[4])(flask)) return false;
+            void* resurrection = entity::native::ThingComponentAccess::Find(flask,
+                static_cast<entity::native::ThingComponentType>(0xE1));
+            if (resurrection == nullptr) return false;
+            CombatHealthMutationEvent event;
+            event.creature = creature;
+            event.thingUid = ReadThingUid(creature);
+            float previousMaximum = 0;
+            ReadCombatHealth(creature, event.previousHealth, previousMaximum);
+            reinterpret_cast<void(__thiscall*)(void*, void*)>(base + UseFlaskRva)(resurrection, creature);
+            if (ReadCombatHealth(creature, event.currentHealth, event.maximumHealth))
+            {
+                event.observedAt = GetTickCount64();
+                CaptureHealthMutation(this, event);
+            }
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
     CreatureCombatService::~CreatureCombatService()
     {
         Shutdown();

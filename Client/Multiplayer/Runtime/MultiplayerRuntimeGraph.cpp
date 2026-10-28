@@ -142,13 +142,17 @@ namespace fable::multiplayer
         w.cutsceneSync.Initialize(role, actorId, t.transport, p.localHero, t.remotePlayerChannels, w.cutscenes, entities,
             e.entityPresence.LiveEntities(), diagnostics_);
         w.chestSync.Initialize(role, t.transport, e.entityPresence, e.entityIdentities, p.localHero, entities, diagnostics_);
-        a.killExperience.Initialize(role, t.transport, p.localHero, diagnostics_);
+        a.killExperience.Initialize(role, t.transport, p.localHero, entities, e.entityPresence, e.entityIdentities, e.entityLifecycle, diagnostics_);
         a.combatHits.SetHitObserver(&replication::EntityActionReplication::ObserveHit, &a.entityActions);
-        a.enemyTargets.Initialize(entities, a.entityActions, w.entitySimulation, e.entityPresence,
+        a.enemyTargets.Initialize(role, t.transport, e.entityLifecycle, e.entityIdentities, entities, a.entityActions, w.entitySimulation, e.entityPresence,
             p.playerCombatants, p.localHero, t.remotePlayerChannels, diagnostics_);
         a.npcSimulation.Initialize(role, entities, w.authority, e.entityLifecycle, e.entityPresence,
             p.playerCombatants, p.localHero, t.remotePlayerChannels, diagnostics_);
-        a.combatHits.SetAppliedHitObserver(&combat::NearestPlayerSimulationAssigner::ObserveAppliedHit, &a.npcSimulation);
+        a.combatHits.SetAppliedHitObserver([](void* context, const protocol::CombatHitMessage& hit) {
+            auto& actions = *static_cast<MultiplayerActionContext*>(context);
+            combat::NearestPlayerSimulationAssigner::ObserveAppliedHit(&actions.npcSimulation, hit);
+            combat::EnemyTargetDistributor::ObserveAppliedHit(&actions.enemyTargets, hit);
+        }, &a);
         if (!w.worldSections.Initialize(
                 role, actorId, t.transport, diagnostics_,
                 sessionAuthorityEpoch))
@@ -179,7 +183,7 @@ namespace fable::multiplayer
         w.villageMembership.Initialize(role, actorId, w.authority, e.entityLifecycle, e.entityIdentities, villages, diagnostics_);
         w.entitySimulation.Initialize(actorId, w.authority, e.entityLifecycle, e.entityIdentities, e.entityPresence, p.playerCombatants, diagnostics_);
         MarkStage(InitializationStage::Components);
-        if (!a.playerDeath.Initialize(combat, quests, diagnostics_))
+        if (!a.playerDeath.Initialize(combat, quests, p.playerCombatants, diagnostics_))
         {
             diagnostics_.Event(
                 "ClientFailed", "multiplayer-player-death-initialization");

@@ -23,6 +23,9 @@ namespace fable::multiplayer::entities
         bool hasTransform = false;
         bool gamePersistent = false;
         bool levelPersistent = false;
+        bool groundLoot = false;
+        std::int32_t lootGold = 0;
+        std::int32_t lootExperience = 0;
         bool creature = false;
         bool hasHeroMorph = false;
         bool hasVillageMembership = false;
@@ -70,6 +73,7 @@ namespace fable::multiplayer::entities
         [[nodiscard]] static bool IsPlayerPresentation(
             const LiveEntityRecord& record) noexcept;
         void Clear() noexcept;
+        std::vector<LiveEntityChange> RefreshGroundLoot();
 
     private:
         std::uint32_t NextIncarnation() noexcept;

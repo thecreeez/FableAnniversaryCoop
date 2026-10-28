@@ -432,6 +432,8 @@ namespace fable::game::hero_pawn::remote
             equipmentReady && equipment_.IsReady();
         appearanceBaselineApplied_ = appearanceApplied;
         equipmentBaselineApplied_ = equipmentApplied;
+        if (avatar_ != nullptr)
+            avatar_->SetDrawable(!cutsceneHidden_ && (IsLifecycleActive() || (appearanceApplied && equipmentApplied)));
         if (appearanceApplied && equipmentApplied)
         {
             lifecyclePhase_ = RemoteHeroLifecyclePhase::AppearanceApplied;
@@ -504,7 +506,10 @@ namespace fable::game::hero_pawn::remote
         const HMODULE gameModule = GetModuleHandleW(nullptr);
         if (!roll)
         {
-            return CreatureMotionActionFunctions::SubmitStartBlocking(gameModule, nativeAvatar_);
+            if (motion[0] < 0.0f)
+                return CreatureMotionActionFunctions::SetBlocking(gameModule, nativeAvatar_, false);
+            return CreatureMotionActionFunctions::SubmitStartBlocking(gameModule, nativeAvatar_) &&
+                CreatureMotionActionFunctions::SetBlocking(gameModule, nativeAvatar_, true);
         }
         const float direction[3] = {motion[0], motion[1], motion[2]};
         const float stick[2] = {motion[3], motion[4]};
@@ -513,8 +518,9 @@ namespace fable::game::hero_pawn::remote
 
     void RemoteHeroActor::SetCutsceneHidden(const bool hidden) noexcept
     {
+        cutsceneHidden_ = hidden;
         if (avatar_ == nullptr) return;
-        avatar_->SetDrawable(!hidden);
+        avatar_->SetDrawable(!hidden && appearanceBaselineApplied_ && IsLifecycleActive());
     }
 
     void RemoteHeroActor::DriveMovement()

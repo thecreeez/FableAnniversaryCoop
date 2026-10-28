@@ -51,6 +51,7 @@ namespace fable::multiplayer::protocol
         ChestOpen = 21,
         DemonDoorOpen = 22,
         KillExperience = 23,
+        EnemyTarget = 24,
         Count,
     };
 

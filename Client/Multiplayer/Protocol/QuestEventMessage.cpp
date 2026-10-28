@@ -55,7 +55,7 @@ namespace fable::multiplayer::protocol
     bool IsValidQuestEventOperation(const std::uint8_t value) noexcept
     {
         return value >= static_cast<std::uint8_t>(QuestEventOperation::Activate) &&
-            value <= static_cast<std::uint8_t>(QuestEventOperation::ShowQuestScreen);
+            value <= static_cast<std::uint8_t>(QuestEventOperation::CloseQuestScreen);
     }
 
     bool EncodeQuestEventMessage(

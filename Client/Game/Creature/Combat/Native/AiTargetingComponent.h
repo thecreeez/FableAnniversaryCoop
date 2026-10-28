@@ -23,6 +23,11 @@ namespace fable::game::creature::combat::native
         static constexpr std::uintptr_t SetScriptTargetOverrideRva =
             0x01A9450D;
 
+        // Host-selected combat targets, consumed at the native AI getters,
+        // independently from CTCTargetingAI's script override.
+        static bool BindCombatTarget(HMODULE module, void* creature, void* target) noexcept;
+        static void ClearCombatTarget(void* creature) noexcept;
+        static bool ConsumeCombatTargetRead(void* creature) noexcept;
         [[nodiscard]] static bool Validate(
             HMODULE gameModule,
             void* targetingComponent) noexcept;

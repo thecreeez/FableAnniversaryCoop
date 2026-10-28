@@ -30,6 +30,9 @@ namespace fable::multiplayer::entities
         bool hasTransform = false;
         bool gamePersistent = false;
         bool levelPersistent = false;
+        bool groundLoot = false;
+        std::int32_t lootGold = 0;
+        std::int32_t lootExperience = 0;
         bool creature = false;
         bool live = false;
         bool available = true;

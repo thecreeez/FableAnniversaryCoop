@@ -123,6 +123,9 @@ namespace fable::multiplayer::replication
             void* context,
             const game::creature::locomotion::CreatureModeSourceEvent& event);
 
+        bool CaptureBlockState();
+        void* blockingHero_ = nullptr;
+        bool blocking_ = false;
         bool PairAcceptedLocalActions();
         bool CaptureLocal(
             const game::creature::combat::CreatureAbilityEvent& event,

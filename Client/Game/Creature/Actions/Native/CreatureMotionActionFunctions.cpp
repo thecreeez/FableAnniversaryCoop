@@ -1,4 +1,5 @@
 #include "CreatureMotionActionFunctions.h"
+#include "Game/Entity/Native/ThingComponentAccess.h"
 
 #include "Game/Creature/Actions/Hooks/CreatureActionLifecycleObserver.h"
 #include "Game/Creature/Actions/Native/CreatureActionFunctions.h"
@@ -102,6 +103,33 @@ namespace
 
 namespace fable::game::creature::actions::native
 {
+    bool CreatureMotionActionFunctions::ReadBlocking(void* creature, bool& blocking) noexcept
+    {
+        void* combat = entity::native::ThingComponentAccess::Find(creature,
+            static_cast<entity::native::ThingComponentType>(0x30));
+        if (combat == nullptr) return false;
+        __try { blocking = *(static_cast<const unsigned char*>(combat) + 0x6F) != 0; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        return true;
+    }
+
+    bool CreatureMotionActionFunctions::SetBlocking(HMODULE gameModule, void* creature, bool blocking) noexcept
+    {
+        void* combat = entity::native::ThingComponentAccess::Find(creature,
+            static_cast<entity::native::ThingComponentType>(0x30));
+        if (gameModule == nullptr || combat == nullptr) return false;
+        const auto address = reinterpret_cast<std::uintptr_t>(gameModule) +
+            (blocking ? BeginBlockingRva : EndBlockingRva);
+        const unsigned char expected[] = {0x83, 0xEC, 0x08, 0x56, 0x57, 0x8B, 0xF9};
+        __try
+        {
+            if (std::memcmp(reinterpret_cast<void*>(address), expected, sizeof(expected)) != 0) return false;
+            reinterpret_cast<void(__thiscall*)(void*)>(address)(combat);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        return true;
+    }
+
     bool CreatureMotionActionFunctions::SubmitStartBlocking(
         const HMODULE gameModule, void* const creature, const bool authoritativeReplay) noexcept
     {

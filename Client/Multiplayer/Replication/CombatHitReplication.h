@@ -61,6 +61,10 @@ namespace fable::multiplayer::replication
             applicator_.SetAppliedHitObserver(observer, context);
         }
 
+        [[nodiscard]] bool WasDamagedByWorldEntity(std::uint64_t sourceUid, std::uint64_t targetActor,
+            std::uint64_t since) const noexcept
+        { return applicator_.WasDamagedByWorldEntity(sourceUid, targetActor, since); }
+
         // Game thread: every native hit this process resolved (source and
         // target Thing UIDs), e.g. to learn which NPC is fighting which player.
         using HitObserver = void (*)(void* context, std::uint64_t sourceThingUid, std::uint64_t targetThingUid);

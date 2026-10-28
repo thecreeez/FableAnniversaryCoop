@@ -307,7 +307,12 @@ namespace fable::multiplayer::world
         }
         if (waiting && releaseName.empty() && !timedOut)
         {
-            UpdateWaitPrompt(worldSettled ? local : nullptr, present, total);
+            // Settling a gathered party is not waiting for another player.
+            // Keep the anchor while readiness settles, without flashing UI.
+            if (worldSettled && present < total)
+                UpdateWaitPrompt(local, present, total);
+            else
+                prompt_.Close();
         }
         else
         {

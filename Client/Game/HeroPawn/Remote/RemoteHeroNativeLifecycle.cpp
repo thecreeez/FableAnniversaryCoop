@@ -251,8 +251,8 @@ namespace fable::game::hero_pawn::remote
         const bool attackable = owner_.avatar_->SetAttackable(true);
         const bool damageable = owner_.avatar_->SetDamageable(true);
         const bool friendly = owner_.avatar_->SetFriendsWithEverything(false);
-        const bool collidable = owner_.avatar_->SetCollidable(true);
-        const bool drawable = owner_.avatar_->SetDrawable(true);
+        const bool collidable = owner_.avatar_->SetCollidable(false);
+        const bool drawable = owner_.avatar_->SetDrawable(!owner_.cutsceneHidden_ && owner_.appearanceBaselineApplied_ && owner_.IsLifecycleActive());
         owner_.lastPresentationRepairAt_ = 0;
 
         if (unload && persistent && attackable && damageable && friendly &&
@@ -298,9 +298,10 @@ namespace fable::game::hero_pawn::remote
                 const bool persistenceRepaired =
                     owner_.avatar_->SetPersistent(true);
                 const bool drawableRepaired =
-                    owner_.avatar_->SetDrawable(true);
+                    owner_.avatar_->SetDrawable(!owner_.cutsceneHidden_ && owner_.appearanceBaselineApplied_ && owner_.IsLifecycleActive());
+                const bool collisionRepaired = owner_.avatar_->SetCollidable(false);
                 const bool repaired = unloadPolicyRepaired &&
-                    persistenceRepaired && drawableRepaired;
+                    persistenceRepaired && drawableRepaired && collisionRepaired;
                 if (!repaired &&
                     !owner_.presentationRepairFailureReported_)
                 {

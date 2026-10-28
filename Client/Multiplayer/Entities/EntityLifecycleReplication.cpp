@@ -62,14 +62,11 @@ namespace fable::multiplayer::entities
         const bool canPublishOwnedMap = ownsMap && ownerRosterReady &&
             (role_ == PeerRole::Host ||
                 directory_.HasAuthoritativeBaseline());
-        // Native owner-authored additions and removals briefly make the live
-        // roster differ from the canonical directory. Materialization detects
-        // that difference before lifecycle reconciliation runs, so permit the
-        // current incremental batch when this exact lease was verified ready
-        // on the preceding reconciliation. New leases still require a full
-        // ready roster before they can seed or mutate canonical state.
+        // Initialization is sticky for an exact map lease. Dynamic roster
+        // convergence must not close admission of subsequent spawn/despawn
+        // deltas. A new lease still requires the protected initial snapshot.
         const bool canPublishOwnedChanges = canPublishOwnedMap ||
-            (sameOwnedLease && lastOwnedRosterReady_);
+            (sameOwnedLease && ownedLeaseEstablished_);
 
         if (canPublishOwnedMap && (baselineRequired || ownershipChanged) &&
             !QueueLocalSnapshot(
@@ -128,22 +125,20 @@ namespace fable::multiplayer::entities
         {
             lastOwnedMapId_ = localMapId;
             lastOwnedMapEpoch_ = lease->epoch;
-            lastOwnedRosterReady_ = ownerRosterReady;
+            ownedLeaseEstablished_ = true;
         }
         else if (ownsMap)
         {
-            // Not yet publishable (e.g. re-taking a map whose roster is still
-            // from an older epoch): keep the lease unrecorded, so the full
-            // owner snapshot is still sent once the roster turns ready.
-            // Recording it here made a returning owner skip that snapshot and
-            // left every NPC loaded with the map without a canonical record.
-            lastOwnedRosterReady_ = false;
+            // Convergence can change as NPCs spawn or unload. Initialization
+            // remains established for this exact lease; only a new lease
+            // needs the protected full-snapshot gate again.
+            if (!sameOwnedLease) ownedLeaseEstablished_ = false;
         }
         else
         {
             lastOwnedMapId_ = 0;
             lastOwnedMapEpoch_ = 0;
-            lastOwnedRosterReady_ = false;
+            ownedLeaseEstablished_ = false;
         }
 
         if (role_ == PeerRole::Host && !ResolveUnknownMapNames())
@@ -1082,6 +1077,9 @@ namespace fable::multiplayer::entities
             intent.position = record.position;
             intent.facing = record.facing;
         }
+        intent.groundLoot = record.groundLoot;
+        intent.lootGold = record.lootGold;
+        intent.lootExperience = record.lootExperience;
         intent.entityUid = record.thingUid;
         if (record.hasVillageMembership)
         {
@@ -1280,6 +1278,30 @@ namespace fable::multiplayer::entities
         return PublishPending();
     }
 
+    bool EntityLifecycleReplication::CommitGroundPickup(std::uint64_t uid, std::uint16_t mapId)
+    {
+        if (role_ != PeerRole::Host) return false;
+        const auto* world = directory_.Find(uid);
+        if (world == nullptr) return true; // owner already observed the native removal
+        if (!world->groundLoot || world->mapId != mapId) return false;
+        LiveEntityRecord source;
+        source.thingUid = uid;
+        source.definitionIndex = world->definitionIndex;
+        source.mapId = world->mapId;
+        source.groundLoot = true;
+        source.lootGold = world->lootGold;
+        source.lootExperience = world->lootExperience;
+        source.scriptName = world->scriptName;
+        source.gamePersistent = world->gamePersistent;
+        source.levelPersistent = world->levelPersistent;
+        auto intent = LocalIntent(source, false, world->mapName, mapId, world->mapEpoch);
+        intent.entityGeneration = world->generation;
+        protocol::EntityLifecycleMessage authoritative;
+        bool changed = false;
+        if (!directory_.HostApplyIntent(intent, world->simulationOwnerActorId, authoritative, changed)) return false;
+        return !changed || Queue(std::move(authoritative));
+    }
+
     void EntityLifecycleReplication::Shutdown() noexcept
     {
         directory_.Clear();
@@ -1295,7 +1317,7 @@ namespace fable::multiplayer::entities
         nextBaselineId_ = 0;
         lastOwnedMapEpoch_ = 0;
         lastOwnedMapId_ = 0;
-        lastOwnedRosterReady_ = false;
+        ownedLeaseEstablished_ = false;
         publishBackpressured_ = false;
         initialized_ = false;
     }

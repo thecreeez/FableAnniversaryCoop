@@ -281,14 +281,9 @@ namespace fable::game::world::travel
         }
         pending_ = preparation;
         ReportRegionExit(preparation);
-        const DepartureSink sink = departureSink_.load(
-            std::memory_order_acquire);
-        void* const context = departureSinkContext_.load(
-            std::memory_order_acquire);
-        if (sink != nullptr)
-        {
-            sink(context, preparation);
-        }
+        // This is only an exit proposal: retail may still show Leave/Stay.
+        // Retiring source presentation here breaks the Stay branch.
+
     }
 
     bool WorldTravelObserver::ObservePrepareMapChange(
@@ -322,6 +317,10 @@ namespace fable::game::world::travel
             return true;
         }
 
+        // PrepareMapChange is the first confirmed departure boundary.
+        const DepartureSink departure = departureSink_.load(std::memory_order_acquire);
+        if (departure != nullptr)
+            departure(departureSinkContext_.load(std::memory_order_acquire), preparation);
         ReportPrepareMapChange(preparation, count);
         pending_ = {};
         const PreparationSink sink = sink_.load(std::memory_order_acquire);

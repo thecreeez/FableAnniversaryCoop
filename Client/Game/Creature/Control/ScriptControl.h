@@ -20,6 +20,7 @@ namespace fable::game
     class ScriptControl final
     {
     public:
+        static bool HasNativeControl(void* creature) noexcept;
         static ScriptControl* Create(
             EntityService& service,
             const native::ScriptThing& entity,

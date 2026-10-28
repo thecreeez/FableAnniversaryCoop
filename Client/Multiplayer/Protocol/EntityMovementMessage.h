@@ -17,6 +17,7 @@ namespace fable::multiplayer::protocol
         std::uint64_t ownerActorId = 0;
         std::uint32_t mapEpoch = 0;
         std::uint32_t sequence = 0;
+        std::uint32_t simulationEpoch = 0;
         std::string mapName;
         game::Vector3 position = {};
         game::Vector3 velocity = {};

@@ -12,6 +12,11 @@ namespace fable::game::creature::actions::native
     // CThingCreature::AddAction (0x01B42F70).
     struct CreatureMotionActionFunctions final
     {
+        // CTCCombat's retail paired held-block entry/exit (not the start animation).
+        static constexpr std::uintptr_t BeginBlockingRva = 0x01959E50;
+        static constexpr std::uintptr_t EndBlockingRva = 0x01959F80;
+        static bool ReadBlocking(void* creature, bool& blocking) noexcept;
+        static bool SetBlocking(HMODULE gameModule, void* creature, bool blocking) noexcept;
         // CCreatureAction_StartBlocking(creature): enters the native block.
         static constexpr std::uintptr_t StartBlockingConstructorRva = 0x017AA9D0;
         static constexpr std::uintptr_t StartBlockingVtableRva = 0x02AC5F3C;

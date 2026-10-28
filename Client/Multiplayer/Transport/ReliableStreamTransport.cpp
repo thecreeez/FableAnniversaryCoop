@@ -173,7 +173,8 @@ namespace fable::multiplayer
                 type == PacketType::Cutscene ||
                 type == PacketType::ChestOpen ||
                 type == PacketType::DemonDoorOpen ||
-                type == PacketType::KillExperience;
+                type == PacketType::KillExperience ||
+                type == PacketType::EnemyTarget;
         }
         if (streamId.kind == ReliableStreamKind::World)
         {

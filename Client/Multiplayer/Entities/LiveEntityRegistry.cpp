@@ -1,6 +1,34 @@
+#include <cmath>
 #include "LiveEntityRegistry.h"
+#include "Game/Entity/Native/ThingComponentAccess.h"
 
 #include <utility>
+
+namespace
+{
+    std::int32_t ReadGroundOrb(void* orb) noexcept
+    {
+        __try { const auto value = *reinterpret_cast<std::int32_t*>(static_cast<unsigned char*>(orb) + 0x10); return value >= 0 && value <= 1000000 ? value : 0; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    }
+    bool ReadGroundPosition(void* thing, fable::game::Vector3& position) noexcept
+    {
+        // CThing::GetPosition RVA01B2B440: *(thing+6C)+0C.
+        __try
+        {
+            void* physics = *reinterpret_cast<void**>(static_cast<unsigned char*>(thing) + 0x6C);
+            if (physics == nullptr) return false;
+            position = *reinterpret_cast<fable::game::Vector3*>(static_cast<unsigned char*>(physics) + 0x0C);
+            return std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    std::int32_t ReadGroundGold(void* gold) noexcept
+    {
+        __try { return *reinterpret_cast<const std::int32_t*>(static_cast<const unsigned char*>(gold) + 0x0C); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    }
+}
 
 namespace fable::multiplayer::entities
 {
@@ -66,6 +94,17 @@ namespace fable::multiplayer::entities
             record.summonedCreature = event.summonedCreature;
             record.abilityOwnedTransient = event.abilityOwnedTransient;
             record.thing = event.thing;
+            if (!record.creature)
+            {
+                using namespace game::entity::native;
+                void* gold = ThingComponentAccess::Find(event.thing, static_cast<ThingComponentType>(0xCC));
+                record.groundLoot = ThingComponentAccess::Find(event.thing, static_cast<ThingComponentType>(0x69)) != nullptr || gold != nullptr || ThingComponentAccess::FindByVtableRva(
+                    event.thing, GetModuleHandleW(nullptr), 0x02B0DC8C) != nullptr;
+                if (gold != nullptr)
+                {
+                    record.lootGold = ReadGroundGold(gold);
+                }
+            }
             record.mapwhoComponent = event.component;
             if (existing != records_.end())
             {
@@ -196,10 +235,44 @@ namespace fable::multiplayer::entities
         return records_.size();
     }
 
+    std::vector<LiveEntityChange> LiveEntityRegistry::RefreshGroundLoot()
+    {
+        std::vector<LiveEntityChange> changed;
+        for (auto& entry : records_)
+        {
+            auto& record = entry.second;
+            if (record.creature || record.thing == nullptr) continue;
+            using namespace game::entity::native;
+            void* orb = ThingComponentAccess::Find(record.thing, static_cast<ThingComponentType>(0x69));
+            void* gold = ThingComponentAccess::Find(record.thing, static_cast<ThingComponentType>(0xCC));
+            if (orb == nullptr && gold == nullptr) continue;
+            auto updated = record;
+            updated.groundLoot = true;
+            if (orb != nullptr) updated.lootExperience = ReadGroundOrb(orb);
+            if (gold != nullptr) updated.lootGold = ReadGroundGold(gold);
+            game::Vector3 position;
+            if (orb != nullptr && ReadGroundPosition(record.thing, position) &&
+                (!record.hasTransform || record.position.HorizontalDistanceTo(position) >= 0.10f || std::fabs(record.position.z - position.z) >= 0.10f))
+            {
+                updated.position = position;
+                updated.hasTransform = true;
+            }
+            if (updated.groundLoot != record.groundLoot || updated.lootExperience != record.lootExperience ||
+                updated.lootGold != record.lootGold || updated.position.x != record.position.x ||
+                updated.position.y != record.position.y || updated.position.z != record.position.z)
+            {
+                record = updated;
+                changed.push_back({LiveEntityChangeKind::Rebound, record});
+                MarkChanged();
+            }
+        }
+        return changed;
+    }
+
     bool LiveEntityRegistry::IsReplicable(
         const LiveEntityRecord& record) noexcept
     {
-        const bool networkIdentityBearing = record.creature ||
+        const bool networkIdentityBearing = record.creature || record.groundLoot ||
             record.gamePersistent || record.levelPersistent ||
             record.hasVillageMembership || !record.scriptName.empty();
         return record.thingUid != 0 && record.thing != nullptr &&

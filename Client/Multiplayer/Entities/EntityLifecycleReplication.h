@@ -67,6 +67,7 @@ namespace fable::multiplayer::entities
 
         [[nodiscard]] WorldEntityDirectory& Directory() noexcept;
         [[nodiscard]] const WorldEntityDirectory& Directory() const noexcept;
+        bool CommitGroundPickup(std::uint64_t uid, std::uint16_t mapId);
         void Shutdown() noexcept;
 
     private:
@@ -123,7 +124,7 @@ namespace fable::multiplayer::entities
         std::uint32_t nextBaselineId_ = 0;
         std::uint32_t lastOwnedMapEpoch_ = 0;
         std::uint16_t lastOwnedMapId_ = 0;
-        bool lastOwnedRosterReady_ = false;
+        bool ownedLeaseEstablished_ = false;
         // Owner roster sweep: once a second every live NPC on the owned map
         // without a live canonical record is published like a fresh spawn,
         // so story spawns and missed load-time registrations always catch up.

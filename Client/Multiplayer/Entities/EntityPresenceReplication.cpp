@@ -187,6 +187,12 @@ namespace fable::multiplayer::entities
             baselineRequired_ = true;
             return false;
         }
+        const auto now = GetTickCount64();
+        if (now >= nextLootRefreshAt_)
+        {
+            nextLootRefreshAt_ = now + 200;
+            for (const auto& change : liveEntities_.RefreshGroundLoot()) TrackChange(change);
+        }
         return true;
     }
 

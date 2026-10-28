@@ -3,6 +3,7 @@
 #include "Core/Diagnostics/Diagnostics.h"
 
 #include <atomic>
+#include <vector>
 #include <cstdint>
 
 namespace fable::game
@@ -57,11 +58,17 @@ namespace fable::automation::multiplayer::features
             AwaitCutsceneEnd,
             HostToWasp,
             HostAwaitWaspAttack,
+            HostAwaitGuestReady,
             HostAwaitGuestAttacked,
             HostAwaitGuestArrival,
+            HostAwaitGuestDeparture,
             HostAwaitWaspAttackAgain,
             GuestAwaitHostArrival,
+            GuestAwaitHostRetreat,
+            GuestAwaitHostReturn,
             GuestAwaitHit,
+            GuestFlaskProbe,
+            GuestAwaitFlaskRecovery,
             Done,
             Failed,
         };
@@ -82,6 +89,11 @@ namespace fable::automation::multiplayer::features
         bool TeleportLocalHero(const float (&position)[3], const char* reason) noexcept;
         // Host: the nearest wasp this process simulates; false if none.
         bool FindWasp(std::uint64_t& uid, float (&position)[3]) noexcept;
+        bool FindCorpseSwarm(const float (&nearby)[3], float (&position)[3]) noexcept;
+        bool SwarmDamagedPlayer(std::uint64_t actor) const noexcept;
+        std::vector<std::uint64_t> swarmUids_;
+        float swarmCenter_[3] = {};
+        bool swarmSelected_ = false;
         bool WaspPosition(float (&position)[3]) noexcept;
         // Guest: the wasp nearest a point (the host's last fighting spot).
         bool FindWaspNear(const float (&nearby)[3], std::uint64_t& uid, float (&position)[3]) noexcept;
@@ -93,6 +105,11 @@ namespace fable::automation::multiplayer::features
         game::EntityService* entities_ = nullptr;
         game::PlayerService* players_ = nullptr;
         float healthBaseline_ = 0.0f;
+        float retreatAt_[3] = {};
+        int flaskBaseline_ = -1;
+        std::uint64_t orbProbeUid_ = 0, orbCollectAt_ = 0;
+        bool orbReplicaSeen_ = false, orbReplicaRemoved_ = false;
+        std::uint64_t balancedSince_ = 0;
         ::fable::multiplayer::MultiplayerRuntimeGraph* multiplayer_ = nullptr;
         core::Diagnostics diagnostics_ = {};
         std::atomic<Phase> phase_{Phase::WaitingForWorld};

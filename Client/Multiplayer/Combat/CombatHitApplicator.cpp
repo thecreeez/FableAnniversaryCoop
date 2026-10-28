@@ -493,11 +493,22 @@ namespace fable::multiplayer::combat
             terminal ? "true" : "false",
             result.reactionFlags);
         diagnostics_.Event("MultiplayerCombatHitApplied", detail);
+        if (result.sourceDomain == protocol::CombatActionDomain::WorldEntity &&
+            result.targetKind == protocol::CombatParticipantKind::Player && result.healthAfter < result.healthBefore)
+            recentWorldHits_[recentWorldHitIndex_++ % recentWorldHits_.size()] = {result.sourceId, result.targetId, GetTickCount64()};
         if (appliedHitObserver_ != nullptr)
         {
             appliedHitObserver_(appliedHitObserverContext_, result);
         }
         return true;
+    }
+
+    bool CombatHitApplicator::WasDamagedByWorldEntity(std::uint64_t sourceUid,
+        std::uint64_t targetActor, std::uint64_t since) const noexcept
+    {
+        for (const auto& hit : recentWorldHits_)
+            if (hit.source == sourceUid && hit.target == targetActor && hit.at >= since && hit.at != 0) return true;
+        return false;
     }
 
     void CombatHitApplicator::Shutdown() noexcept
@@ -513,5 +524,7 @@ namespace fable::multiplayer::combat
         localActorId_ = 0;
         nativeObservations_.Clear();
         terminalTransitions_.Clear();
+        recentWorldHits_ = {};
+        recentWorldHitIndex_ = 0;
     }
 }

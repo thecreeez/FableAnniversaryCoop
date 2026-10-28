@@ -1,4 +1,5 @@
 #include "EntityMaterializationService.h"
+#include "Game/Entity/Native/ThingComponentAccess.h"
 
 #include <algorithm>
 
@@ -19,6 +20,22 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+namespace
+{
+    void ApplyOrbState(fable::game::EntityService& entities, fable::game::Entity& item,
+        const fable::multiplayer::entities::WorldEntityRecord& record) noexcept
+    {
+        if (record.lootExperience <= 0) return;
+        using namespace fable::game::entity::native;
+        void* orb = ThingComponentAccess::Find(entities.ResolveNative(item.NativeHandle()), static_cast<ThingComponentType>(0x69));
+        if (orb == nullptr) return;
+        __try { *reinterpret_cast<std::int32_t*>(static_cast<unsigned char*>(orb) + 0x10) = record.lootExperience; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+        if (record.hasTransform && item.GetPosition().HorizontalDistanceTo(record.position) > 0.15f)
+            item.Teleport(record.position, record.facing, false);
+    }
+}
 
 namespace fable::multiplayer::entities
 {
@@ -73,6 +90,7 @@ namespace fable::multiplayer::entities
         }
 
         const bool ownsMap = lease->actorId == localActorId_;
+        localPopulationOwner_ = ownsMap;
         const bool baselineReady = role_ == PeerRole::Host ||
             directory.HasAuthoritativeBaseline();
         const bool canonicalRosterKnown = directory.HasMapRoster(localMapId);
@@ -190,7 +208,7 @@ namespace fable::multiplayer::entities
         std::uint16_t localMapId) noexcept
     {
         return record.thingUid != 0 && record.generation != 0 &&
-            record.available && record.creature &&
+            record.available && (record.creature || record.groundLoot) &&
             BelongsToMap(record, localMap, localMapId) &&
             (record.live || record.awaitingMaterialization);
     }
@@ -211,7 +229,7 @@ namespace fable::multiplayer::entities
             {
                 const LiveEntityRecord* const live = liveEntities.Find(
                     record.thingUid);
-                if (live != nullptr && live->creature &&
+                if (live != nullptr && (live->creature || record.groundLoot) &&
                     !EnsurePersistentState(record, *live))
                 {
                     Report(
@@ -219,6 +237,8 @@ namespace fable::multiplayer::entities
                         record,
                         "village-membership-unresolved");
                 }
+                if (!localPopulationOwner_ && record.lootExperience > 0)
+                    ApplyOrbState(*entities_, *owned->second.entity, record);
                 return true;
             }
             ReleaseOwned(record.thingUid, true);
@@ -226,7 +246,7 @@ namespace fable::multiplayer::entities
 
         const LiveEntityRecord* const live = liveEntities.Find(
             record.thingUid);
-        if (live != nullptr && live->creature)
+        if (live != nullptr && (live->creature || record.groundLoot))
         {
             const bool definitionMatches =
                 live->definitionIndex == record.definitionIndex;
@@ -239,6 +259,12 @@ namespace fable::multiplayer::entities
                     record,
                     "local-uid-collision");
                 return true;
+            }
+            if (!localPopulationOwner_ && record.lootExperience > 0)
+            {
+                const auto localUid = identities_->FindLocal(record.thingUid);
+                game::Entity* item = entities_->FindByUid(localUid != 0 ? localUid : record.thingUid);
+                if (item != nullptr) { ApplyOrbState(*entities_, *item, record); item->Release(); }
             }
             pending_.erase(record.thingUid);
             removalAttempts_.erase(record.thingUid);
@@ -532,7 +558,9 @@ namespace fable::multiplayer::entities
         const WorldEntityRecord& record,
         const std::string& definitionName)
     {
-        game::Entity* const created = entities_->CreateCreature(
+        game::Entity* const created = record.lootExperience > 0
+            ? entities_->CreateExperienceOrb(record.position, record.lootExperience)
+            : entities_->CreateCreature(
             definitionName,
             record.position,
             record.scriptName);
@@ -553,6 +581,18 @@ namespace fable::multiplayer::entities
             created->Release();
             return false;
         }
+        if (record.groundLoot && record.lootGold > 0)
+        {
+            void* gold = game::entity::native::ThingComponentAccess::Find(
+                entities_->ResolveNative(created->NativeHandle()),
+                static_cast<game::entity::native::ThingComponentType>(0xCC));
+            if (gold != nullptr)
+            {
+                __try { *reinterpret_cast<std::int32_t*>(static_cast<unsigned char*>(gold) + 0x0C) = record.lootGold; }
+                __except (EXCEPTION_EXECUTE_HANDLER) {}
+            }
+        }
+        ApplyOrbState(*entities_, *created, record);
         created->SetKillOnLevelUnload(true);
         if (record.hasTransform)
         {
@@ -720,7 +760,7 @@ namespace fable::multiplayer::entities
         const std::vector<LiveEntityRecord> live = liveEntities.Snapshot();
         for (const LiveEntityRecord& local : live)
         {
-            if (!local.creature ||
+            if ((!local.creature && !local.groundLoot) ||
                 !LiveEntityRegistry::IsReplicable(local))
             {
                 continue;
@@ -739,6 +779,15 @@ namespace fable::multiplayer::entities
                 local.thingUid);
             if (world == nullptr)
             {
+                // Only the population owner admits native loot births.
+                // Replica death presentation can independently roll drops;
+                // those must not become a second collectible reward.
+                if (local.groundLoot && !localPopulationOwner_ &&
+                    directory.IsMapRosterComplete(localMapId, rosterEpoch_))
+                {
+                    (void)entities_->RequestDestroyNative(local.thing, false);
+                    continue;
+                }
                 // CTCDummyVillager persists the exact high-simulation
                 // CreatureUID at +0x38. Prefer that durable native bridge over
                 // every descriptive fallback when the host directory knows
@@ -878,7 +927,7 @@ namespace fable::multiplayer::entities
             }
             const LiveEntityRecord* const live = liveEntities.Find(
                 expected.thingUid);
-            if (live == nullptr || live->thing == nullptr || !live->creature ||
+            if (live == nullptr || live->thing == nullptr || (!live->creature && !expected.groundLoot) ||
                 live->definitionIndex != expected.definitionIndex ||
                 (!expected.scriptName.empty() &&
                     live->scriptName != expected.scriptName) ||

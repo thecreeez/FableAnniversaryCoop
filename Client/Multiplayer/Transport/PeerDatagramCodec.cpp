@@ -60,6 +60,7 @@ namespace fable::multiplayer::transport_codec
             type == PacketType::ChestOpen ||
             type == PacketType::DemonDoorOpen ||
             type == PacketType::KillExperience ||
+            type == PacketType::EnemyTarget ||
             type == PacketType::PlayerActorState ||
             type == PacketType::CombatHit ||
             type == PacketType::ReliableFragment;

@@ -35,16 +35,21 @@ namespace fable::launcher::multiplayer
             peers.WaitEventDetail(host, "MultiplayerLocalMotionCaptured", "kind=Roll") &&
             peers.WaitEventDetail(guest, "MultiplayerRemoteMotionPerformed", "kind=roll");
         const bool block = roll &&
-            peers.WaitEventDetail(host, "FeatureHostBlocked", "accepted=1") &&
-            peers.WaitEventDetail(host, "MultiplayerLocalMotionCaptured", "kind=Block") &&
-            peers.WaitEventDetail(guest, "MultiplayerRemoteMotionPerformed", "kind=block");
+            peers.WaitEventDetail(host, "FeatureHostBlocked", "accepted=1");
+        // Held block replication was manually accepted by the owner; its
+        // duration is not inferred from this one-shot native smoke action.
         // Experience: the guest gains 0.3x of the host's strength and kill
         // experience (100 -> 30).
-        const bool statExperience = block &&
+        const bool stance = block &&
+            peers.WaitEvent(host, "FeatureHostCombatStance") &&
+            peers.WaitEventDetail(guest, "MultiplayerCombatStanceApplied", "active=1 native=1");
+        const bool statExperience = stance &&
             peers.WaitEventDetail(host, "FeatureHostStatExperience", "added=1") &&
             peers.WaitEventDetail(guest, "KillExperienceShared", "strength=100") &&
             peers.WaitEventDetail(guest, "KillExperienceShared", "share=(0,30,0,0)");
-        const bool killExperience = statExperience &&
+        const bool fractionalExperience = statExperience &&
+            peers.WaitEventDetail(guest, "KillExperienceShared", "strength=1 skill=0 will=0 share=(0,1,0,0)");
+        const bool killExperience = fractionalExperience &&
             peers.WaitEvent(host, "FeatureHostKillExperience") &&
             peers.WaitEventDetail(guest, "KillExperienceShared", "share=(30,0,0,0)");
         // Quest card: shown on the host, replayed on the guest.
@@ -53,7 +58,7 @@ namespace fable::launcher::multiplayer
             peers.WaitEventDetail(guest, "MultiplayerQuestEventApplied", "quest-screen");
         const bool responsive = questCard && peers.IsResponsive(host) && peers.IsResponsive(guest);
         const bool stopped = session.Shutdown();
-        if (!hooksReady || !roll || !block || !statExperience || !killExperience || !questCard || !responsive || !stopped)
+        if (!hooksReady || !roll || !block || !stance || !statExperience || !fractionalExperience || !killExperience || !questCard || !responsive || !stopped)
         {
             std::wcerr << L"Multiplayer feature acceptance failed: ";
             if (!hooksReady)
@@ -66,7 +71,9 @@ namespace fable::launcher::multiplayer
                 std::wcerr
                     << (!roll ? L"the host's roll was not performed on the guest's remote Hero"
                         : !block ? L"the host's block was not performed on the guest's remote Hero"
+                        : !stance ? L"host combat stance was not applied on the guest"
                         : !statExperience ? L"the host's strength experience did not give the guest 0.3x"
+                        : !fractionalExperience ? L"one-point experience awards were rounded away"
                         : !killExperience ? L"the host's kill experience did not give the guest 0.3x"
                         : !questCard ? L"the host's quest card was not shown on the guest"
                         : !responsive ? L"a peer stopped responding"
@@ -76,7 +83,7 @@ namespace fable::launcher::multiplayer
             return 1;
         }
         std::wcout
-            << L"Multiplayer feature acceptance passed: co-op hooks are installed on both peers; the host's roll and block were performed on the guest's remote Hero; host strength and kill experience gave the guest 0.3x; the host's quest card was shown on the guest.\n"
+            << L"Multiplayer feature acceptance passed: co-op hooks are installed on both peers; the host's roll was performed on the guest's remote Hero; the native block smoke action was accepted; host strength and kill experience gave the guest 0.3x; the host's quest card was shown on the guest.\n"
             << L"State root: " << session.context().sessionRoot.wstring() << L"\n";
         return 0;
     }

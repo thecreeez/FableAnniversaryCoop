@@ -28,6 +28,13 @@ namespace
         const Vector3*,
         const CharString*,
         bool);
+    bool CreateOrbHandle(GameScriptInterface* api, ScriptThing& result,
+        const Vector3& position, int amount) noexcept
+    {
+        using Factory = ScriptThing* (__thiscall*)(GameScriptInterface*, ScriptThing*, const Vector3*, int);
+        __try { return reinterpret_cast<Factory>(api->vtable[109])(api, &result, &position, amount) == &result; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
     using ScriptThingDestructor = void* (__thiscall*)(ScriptThing*, unsigned int);
     using ScriptThingPredicate = bool(__thiscall*)(const ScriptThing*);
     using ScriptThingSetter = void(__thiscall*)(const ScriptThing*, bool);
@@ -332,6 +339,27 @@ namespace fable::game
             return false;
         }
         return true;
+    }
+
+    Entity* EntityService::CreateExperienceOrb(const Vector3& position, int amount)
+    {
+        // CGameScriptInterface::vf109 constructs an orb, initializes its
+        // component amount/scale and returns an owning CScriptThing handle.
+        auto* api = ResolveInterface();
+        const auto base = reinterpret_cast<std::uintptr_t>(gameModule_);
+        const unsigned char expected[] = {0x6A, 0xFF, 0x68, 0x08, 0xC0};
+        if (api == nullptr || amount <= 0 ||
+            reinterpret_cast<std::uintptr_t>(api->vtable[109]) != base + 0x018A37A0 ||
+            std::memcmp(reinterpret_cast<void*>(base + 0x018A37A0), expected, sizeof(expected)) != 0)
+        {
+            diagnostics_.Event("ExperienceOrbFactoryBlocked", "native orb factory validation failed");
+            return nullptr;
+        }
+        native::ScriptThing result;
+        const bool valid = CreateOrbHandle(api, result, position, amount) && IsValid(result);
+        if (!valid) { ReleaseHandle(result); return nullptr; }
+        diagnostics_.Event("ExperienceOrbCreated", "native script orb factory succeeded");
+        return new Entity(*this, result);
     }
 
     Entity* EntityService::CreateCreature(

@@ -188,6 +188,16 @@ namespace fable::multiplayer::authority
         {
             return simulationRevision_;
         }
+        void CancelEntitySimulationPreparation(const EntityAuthorityKey& entity)
+        { simulationPreparations_.erase(entity); }
+        [[nodiscard]] std::uint32_t EntitySimulationEpoch(const EntityAuthorityKey& entity,
+            const std::string& mapName, std::uint32_t mapEpoch) const noexcept
+        {
+            const auto* assignment = FindSimulationAssignment(entity, mapName, mapEpoch);
+            return assignment != nullptr ? assignment->epoch : 0;
+        }
+        void ObserveReadyEntity(const EntityAuthorityKey& entity, const std::string& mapName,
+            std::uint32_t mapEpoch);
         void Shutdown() noexcept;
 
     private:
@@ -233,6 +243,12 @@ namespace fable::multiplayer::authority
         std::unordered_map<EntityAuthorityKey, SimulationAssignment, EntityAuthorityKeyHash>
             simulationAssignments_;
         std::deque<protocol::AuthorityMessage> pendingSimulationAssignments_;
+        struct SimulationPreparation final
+        {
+            protocol::AuthorityMessage message;
+            std::uint64_t startedAt = 0;
+        };
+        std::unordered_map<EntityAuthorityKey, SimulationPreparation, EntityAuthorityKeyHash> simulationPreparations_;
         std::uint32_t nextSimulationEpoch_ = 0;
         std::uint64_t simulationRevision_ = 0;
         world::MapIdentityRegistry mapIdentities_;

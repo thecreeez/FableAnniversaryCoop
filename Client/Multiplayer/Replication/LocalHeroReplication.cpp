@@ -695,12 +695,21 @@ namespace fable::multiplayer::replication
 
     void LocalHeroReplication::CaptureEquipment(std::uint64_t now)
     {
-        if (!worldReady_ || nativeHero_ == nullptr ||
-            (equipmentReady_ &&
-                !equipmentDirty_.load(std::memory_order_acquire)) ||
-            now < nextEquipmentCaptureAt_)
+        if (!worldReady_ || nativeHero_ == nullptr || now < nextEquipmentCaptureAt_)
         {
             return;
+        }
+        if (equipmentReady_ && !equipmentDirty_.load(std::memory_order_acquire))
+        {
+            // Combat idle expires/starts without a carrying mutation. Poll
+            // just the native predicate even when the loadout is unchanged.
+            const bool stance = game::hero_pawn::equipment::native::HeroWeaponComponent::ReadCombatStance(nativeHero_);
+            const auto* state = CurrentState();
+            if (state != nullptr && state->heroEquipment.combatStance == stance)
+            {
+                nextEquipmentCaptureAt_ = now + EquipmentMutationSettleMilliseconds;
+                return;
+            }
         }
 
         // A native draw/stow operation removes and reattaches several Things

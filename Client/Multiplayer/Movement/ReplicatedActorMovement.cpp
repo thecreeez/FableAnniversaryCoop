@@ -98,13 +98,20 @@ namespace fable::multiplayer::movement
             const bool newAuthority = sample.actorId != latest.actorId ||
                 sample.authorityEpoch != latest.authorityEpoch ||
                 sample.mapName != latest.mapName;
-            if (newAuthority)
-            {
-                sampleCount_ = 0;
-            }
-            else if (!IsNewerSequence(sample.sequence, latest.sequence))
+            if (!newAuthority && !IsNewerSequence(sample.sequence, latest.sequence))
             {
                 return;
+            }
+            const bool discontinuity = sample.position.HorizontalDistanceTo(latest.position) > 8.0f ||
+                std::fabs(sample.position.z - latest.position.z) > 8.0f ||
+                (sample.receivedAt > latest.receivedAt && sample.receivedAt - latest.receivedAt > 1000);
+            if (newAuthority || discontinuity)
+            {
+                sampleCount_ = 0;
+                presentationMotionReady_ = false;
+                lastPresentationAt_ = 0;
+                presentationVelocity_ = {};
+                presentationAngularVelocity_ = 0.0f;
             }
         }
         if (sampleCount_ == samples_.size())

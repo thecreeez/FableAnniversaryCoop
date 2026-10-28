@@ -93,6 +93,24 @@ namespace fable::multiplayer::replication
         return true;
     }
 
+    bool LocalPlayerActionCapture::CaptureBlockState()
+    {
+        void* hero = localHero_->NativeHero();
+        if (hero != blockingHero_) { blockingHero_ = hero; blocking_ = false; }
+        bool held = false;
+        using game::creature::actions::native::CreatureMotionActionFunctions;
+        if (hero == nullptr || !CreatureMotionActionFunctions::ReadBlocking(hero, held) || held == blocking_) return true;
+        game::creature::actions::CreatureActionLifecycleEvent event;
+        event.creature = hero;
+        event.accepted = true;
+        event.observedAt = GetTickCount64();
+        strcpy_s(event.actionType, "CCreatureAction_StartBlocking");
+        if (!CaptureLocalMotion(event)) return false;
+        if (!pendingMessages_.empty()) pendingMessages_.back().motion[0] = held ? 1.0f : -1.0f;
+        blocking_ = held;
+        return true;
+    }
+
     bool LocalPlayerActionCapture::CapturePending()
     {
         if (!initialized_ || transport_ == nullptr || localHero_ == nullptr ||
@@ -100,7 +118,7 @@ namespace fable::multiplayer::replication
         {
             return false;
         }
-        return PairAcceptedLocalActions();
+        return PairAcceptedLocalActions() && CaptureBlockState();
     }
 
     const protocol::PlayerActionMessage*
@@ -703,8 +721,7 @@ namespace fable::multiplayer::replication
                     return false;
                 }
             }
-            else if (player_action_semantics::IsRoll(actions.front().actionType) ||
-                     player_action_semantics::IsBlockStart(actions.front().actionType))
+            else if (player_action_semantics::IsRoll(actions.front().actionType))
             {
                 if (!CaptureLocalMotion(actions.front()))
                 {
@@ -980,6 +997,8 @@ namespace fable::multiplayer::replication
         diagnostics_ = {};
         role_ = PeerRole::Guest;
         localActorId_ = 0;
+        blockingHero_ = nullptr;
+        blocking_ = false;
         nextActionId_ = 0;
         nextPresentationRevision_ = 0;
         initialized_ = false;

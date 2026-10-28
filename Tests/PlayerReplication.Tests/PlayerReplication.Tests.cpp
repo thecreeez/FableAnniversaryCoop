@@ -193,6 +193,7 @@ namespace
         message.heroAppearanceModifiers.definitionIndices[0] = 2001;
 
         message.heroEquipment.valid = true;
+        message.heroEquipment.combatStance = true;
         message.heroEquipment.meleeDefinitionIndex = 3001;
         message.heroEquipment.meleeAttachmentSlot = 2;
         message.heroEquipment.activeFamily =
@@ -4074,7 +4075,7 @@ namespace
             source, bytes.data(), bytes.size(), encodedSize));
         // The normal hero has one materialized bone-scale entry. The compact
         // mask/triple representation fits in one conservative datagram.
-        CHECK(test, encodedSize == 474);
+        CHECK(test, encodedSize == 475);
         CHECK(test, !DecodePlayerActorStateMessage(
             bytes.data(), encodedSize - 1, decoded));
 
@@ -4116,7 +4117,7 @@ namespace
         CHECK(test, EncodePlayerActorStateMessage(
             allBones, bytes.data(), bytes.size(), allBonesSize));
         // 453-byte fixed prefix + 15-byte mask + 120 compact XYZ triples.
-        CHECK(test, allBonesSize == 1188);
+        CHECK(test, allBonesSize == 1189);
         CHECK(test, allBonesSize +
                 fable::multiplayer::protocol::PacketHeaderBytes >
             fable::multiplayer::protocol::MaximumDatagramBytes);
@@ -4900,6 +4901,32 @@ namespace
 
 int main()
 {
+    // Prepare and readiness acknowledgements retain the exact entity fence.
+    // Zero epochs must never be accepted as a ready binding.
+    {
+        using namespace fable::multiplayer::protocol;
+        AuthorityMessage proposal;
+        proposal.scope = AuthorityScope::EntitySimulation;
+        proposal.ownerActorId = 2;
+        proposal.entityUid = 42;
+        proposal.entityGeneration = 3;
+        proposal.mapEpoch = 4;
+        proposal.actionEpoch = 5;
+        proposal.mapName = "PicnicArea";
+        std::uint8_t bytes[256] = {};
+        std::size_t size = 0;
+        for (const auto operation : {AuthorityOperation::Prepare, AuthorityOperation::Prepared})
+        {
+            proposal.operation = operation;
+            AuthorityMessage decoded;
+            if (!EncodeAuthorityMessage(proposal, bytes, sizeof(bytes), size) ||
+                !DecodeAuthorityMessage(bytes, size, decoded) || decoded.operation != operation ||
+                decoded.entityUid != 42 || decoded.entityGeneration != 3 ||
+                decoded.mapEpoch != 4 || decoded.actionEpoch != 5) return 1;
+        }
+        proposal.mapEpoch = 0;
+        if (EncodeAuthorityMessage(proposal, bytes, sizeof(bytes), size)) return 1;
+    }
     TestCodecRoundTripAndRejection();
     TestSessionTimingCodec();
     TestLostConstructAndRetransmission();

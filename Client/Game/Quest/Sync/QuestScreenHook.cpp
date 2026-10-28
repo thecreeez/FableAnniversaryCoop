@@ -1,3 +1,4 @@
+#include "Game/Entity/Native/ThingComponentAccess.h"
 #include "QuestScreenHook.h"
 
 #include "Game/Native/Addresses.h"
@@ -10,6 +11,43 @@ namespace
 {
     // Retail slot 325 implementation, checked before patching.
     constexpr std::uintptr_t ShowQuestCardRva = 0x0189B2E0;
+
+    struct CardState { void* card = nullptr; bool open = false; bool ready = false; bool mode = false; };
+    CardState InspectCard(void* hero, HMODULE module) noexcept
+    {
+        CardState result;
+        using namespace fable::game::entity::native;
+        result.card = ThingComponentAccess::Find(hero, static_cast<ThingComponentType>(0xFC));
+        if (result.card == nullptr || module == nullptr) return {};
+        __try
+        {
+            auto* bytes = static_cast<unsigned char*>(result.card);
+            if (*reinterpret_cast<std::uintptr_t*>(bytes) != reinterpret_cast<std::uintptr_t>(module) + 0x02B08434 ||
+                *reinterpret_cast<int*>(bytes + 0x24) == 3) return {};
+            result.open = bytes[0xD] != 0 && bytes[0x20] == 0 && bytes[0xCC] == 0;
+            result.ready = result.open && bytes[0xE] != 0 && *reinterpret_cast<void**>(bytes + 0xC8) != nullptr;
+            result.mode = *reinterpret_cast<int*>(bytes + 0x24) != 0;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return {}; }
+        return result;
+    }
+
+    bool ConfirmCard(void* card) noexcept
+    {
+        // Retail UI accept callback releases the card's UI handles and input
+        // process, then sets +CC for vf28's paired mode/HUD cleanup.
+        const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+        const auto address = base + 0x01A7F170;
+        __try
+        {
+            const auto* code = reinterpret_cast<const unsigned char*>(address);
+            if (code[0] != 0x83 || code[1] != 0xEC || code[2] != 0x30 || code[3] != 0xA1 ||
+                *reinterpret_cast<const std::uintptr_t*>(code + 4) != base + 0x0303E010) return false;
+            reinterpret_cast<void(__thiscall*)(void*)>(address)(card);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
 
     bool ReadRaw(void* const name, char (&buffer)[128]) noexcept
     {
@@ -91,6 +129,10 @@ namespace fable::multiplayer::persistence
                 VirtualProtect(entry_, sizeof(void*), oldProtect, &ignored);
             }
         }
+        observedCard_ = nullptr;
+        observedName_.clear();
+        wasOpen_ = false;
+        forcedClose_ = false;
         entry_ = nullptr;
         if (active_ == this) active_ = nullptr;
         {
@@ -122,6 +164,41 @@ namespace fable::multiplayer::persistence
             }
         }
         hook->original_(self, name, mode, startQuest);
+    }
+
+    bool QuestScreenHook::ConfirmLocalCard(void* localHero) noexcept
+    {
+        const auto state = InspectCard(localHero, GetModuleHandleW(nullptr));
+        return state.ready && ConfirmCard(state.card);
+    }
+
+    void QuestScreenHook::Poll(void* localHero)
+    {
+        const CardState state = InspectCard(localHero, gameModule_);
+        if (wasOpen_ && observedCard_ == state.card && !state.open && !forcedClose_ && !observedName_.empty())
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (observations_.size() < ObservationLimit)
+                observations_.push_back({observedName_, observedMode_, true});
+        }
+        if (state.open && (!wasOpen_ || observedCard_ != state.card))
+        {
+            forcedClose_ = false;
+            observedName_.clear();
+            ReadName(static_cast<unsigned char*>(state.card) + 0x58, observedName_);
+            observedMode_ = state.mode;
+        }
+        wasOpen_ = state.open;
+        observedCard_ = state.card;
+    }
+
+    bool QuestScreenHook::Close(void* localHero, const char* questName) noexcept
+    {
+        const CardState state = InspectCard(localHero, gameModule_);
+        if (!state.ready || state.card != observedCard_ || observedName_ != questName) return false;
+        forcedClose_ = ConfirmCard(state.card);
+        if (forcedClose_) diagnostics_.Event("QuestScreenClosedByOwner", "native confirm requested; retail mode/HUD cleanup retained");
+        return forcedClose_;
     }
 
     bool QuestScreenHook::PopObservation(Observation& observation)

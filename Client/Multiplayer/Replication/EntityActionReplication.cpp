@@ -1,3 +1,4 @@
+#include "Game/Creature/Control/ScriptControl.h"
 #include "EntityActionReplication.h"
 #include "Game/Creature/Animation/CreatureAnimationService.h"
 #include "Game/Creature/Actions/Native/CreatureMotionActionFunctions.h"
@@ -186,6 +187,7 @@ namespace fable::multiplayer::replication
         const std::string& localMap,
         bool ownerRosterReady)
     {
+        (void)ownerRosterReady; // individual canonical leases fence publication
         if (!initialized_ || authority_ == nullptr || lifecycle_ == nullptr ||
             identities_ == nullptr || presence_ == nullptr)
         {
@@ -228,7 +230,7 @@ namespace fable::multiplayer::replication
         const std::uint32_t currentMapEpoch = map != nullptr
             ? map->epoch
             : 0;
-        if (ownerRosterReady && map != nullptr && map->epoch != 0)
+        if (map != nullptr && map->epoch != 0)
         {
             for (const auto& ability : abilities)
             {
@@ -276,7 +278,7 @@ namespace fable::multiplayer::replication
 
             const entities::WorldEntityRecord* const entity =
                 lifecycle_->Directory().Find(event.thingUid);
-            const bool canPublish = ownerRosterReady && entity != nullptr &&
+            const bool canPublish = entity != nullptr &&
                 entity->live && entity->available && entity->creature &&
                 entity->mapName == localMap && entity->mapEpoch != 0 &&
                 authority_->IsEntityActionPublisher(
@@ -435,6 +437,7 @@ namespace fable::multiplayer::replication
             if (self->animation_ != nullptr) self->animation_->EndReplicatedActionSelection();
             return true;
         }
+        if (game::ScriptControl::HasNativeControl(creature)) return false;
         if (std::strcmp(actionType, "CCreatureAction_PlayAnimation") != 0) return false;
         std::uint32_t animationId = 0;
         const std::uint64_t now = GetTickCount64();
@@ -1458,6 +1461,20 @@ namespace fable::multiplayer::replication
     bool EntityActionReplication::ReplayAuthoritativeAbility(
         ActiveAction& action)
     {
+
+        // The local quest script owns choreography while scripted control is
+        // active. Never inject an owner combat clip into that action stack.
+        if (presence_ != nullptr)
+        {
+            const auto* controlled = presence_->LiveEntities().Find(action.entityUid);
+            if (controlled != nullptr && game::ScriptControl::HasNativeControl(controlled->thing))
+            {
+                action.nativeReplayed = true;
+                action.animationReplayed = true;
+                action.abilityReplayed = true;
+                return true;
+            }
+        }
         if (!action.nativeAbility || action.abilityId == 0 ||
             action.ownerActorId == localActorId_ || action.abilityReplayed ||
             action.abilityReplayFailed)
@@ -1571,6 +1588,20 @@ namespace fable::multiplayer::replication
     bool EntityActionReplication::ReplayAuthoritativeNativeAction(
         ActiveAction& action)
     {
+
+        // The local quest script owns choreography while scripted control is
+        // active. Never inject an owner combat clip into that action stack.
+        if (presence_ != nullptr)
+        {
+            const auto* controlled = presence_->LiveEntities().Find(action.entityUid);
+            if (controlled != nullptr && game::ScriptControl::HasNativeControl(controlled->thing))
+            {
+                action.nativeReplayed = true;
+                action.animationReplayed = true;
+                action.abilityReplayed = true;
+                return true;
+            }
+        }
         // One-shot owner attack clips (Fodder attacks and similar) play
         // directly on the fenced copy; looping PlayAnimation goes through
         // PresentationGate below so the native action advances it.
@@ -1582,11 +1613,10 @@ namespace fable::multiplayer::replication
             action.semanticName != "CCreatureAction_InterruptableMidAttack" &&
             action.semanticName.rfind("CCombatAction_", 0) != 0)
         {
-            action.animationReplayed = true;
             const entities::LiveEntityRecord* const live = presence_->LiveEntities().Find(action.entityUid);
             if (live != nullptr && live->thing != nullptr && live->creature)
             {
-                (void)animation_->PlayAuthoritative(live->thing, action.animationId);
+                action.animationReplayed = animation_->PlayAuthoritative(live->thing, action.animationId);
             }
         }
         // Owner PlayAnimation on a fenced NPC: its own AI keeps proposing
@@ -1596,7 +1626,6 @@ namespace fable::multiplayer::replication
             action.ownerActorId != localActorId_ && presence_ != nullptr &&
             action.semanticName == "CCreatureAction_PlayAnimation")
         {
-            action.animationReplayed = true;
             const entities::LiveEntityRecord* const live = presence_->LiveEntities().Find(action.entityUid);
             if (live != nullptr && live->thing != nullptr && live->creature)
             {
@@ -1608,6 +1637,7 @@ namespace fable::multiplayer::replication
                 }
                 presentation.receivedAt = GetTickCount64();
                 ReleaseSRWLockExclusive(&presentationLock_);
+                action.animationReplayed = true;
             }
         }
         if (!action.nativeAbility && action.ownerActorId != localActorId_ &&
@@ -1819,6 +1849,13 @@ namespace fable::multiplayer::replication
     void EntityActionReplication::TrackCombatAction(
         const protocol::EntityActionMessage& message) noexcept
     {
+
+        if (message.targetPlayerActorId != 0 && message.entityUid != 0)
+        {
+            const auto* live = presence_ != nullptr ? presence_->LiveEntities().Find(message.entityUid) : nullptr;
+            try { engagements_[message.entityUid] = {live != nullptr ? live->thing : nullptr, GetTickCount64(), message.targetPlayerActorId}; }
+            catch (...) { diagnostics_.Event("MultiplayerEnemyEngagementDropped", "allocation failure"); }
+        }
         if (combatLedger_ == nullptr || message.actionId == 0 ||
             message.entityUid == 0 || message.entityGeneration == 0 ||
             message.mapEpoch == 0 || message.actionEpoch == 0)

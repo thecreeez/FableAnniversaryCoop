@@ -41,6 +41,7 @@ namespace fable::multiplayer
         {
             diagnostics.Event("ClientFailed", "multiplayer-quest-state-publication");
         }
+        world.questEvents.SetScreenContext(world.authority, players.localHero.NativeHero(), players.localHero.MapId());
         if (!world.questEvents.Process())
         {
             diagnostics.Event("ClientFailed", "multiplayer-quest-event-replication");
@@ -231,7 +232,8 @@ namespace fable::multiplayer
                 entityPresence.LiveEntities(),
                 localMap,
                 ownerRosterReady,
-                transport.remotePlayerChannels.ObserverReadinessRevision()))
+                transport.remotePlayerChannels.ObserverReadinessRevision(),
+                world.cutscenes.IsInCutscene()))
         {
             diagnostics.Event(
                 "ClientFailed", "multiplayer-entity-movement-replication");
