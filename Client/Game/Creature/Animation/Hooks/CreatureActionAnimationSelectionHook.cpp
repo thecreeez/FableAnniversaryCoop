@@ -22,6 +22,15 @@ namespace fable::game::creature::animation
         CreatureActionAnimationSelectionHook::active_ = nullptr;
     thread_local std::uint64_t
         CreatureActionAnimationSelectionHook::scopedSelectionToken_ = 0;
+    thread_local const native::AnimationPlaybackRequest* CreatureActionAnimationSelectionHook::ownerRequest_ = nullptr;
+    thread_local int CreatureActionAnimationSelectionHook::ownerBlendFrames_ = 0;
+    thread_local int CreatureActionAnimationSelectionHook::ownerOptions_ = 0;
+
+    void CreatureActionAnimationSelectionHook::SetOwnerAttackRequest(
+        const native::AnimationPlaybackRequest* request, int blendFrames, int options) noexcept
+    {
+        ownerRequest_ = request; ownerBlendFrames_ = blendFrames; ownerOptions_ = options;
+    }
 
     bool CreatureActionAnimationSelectionHook::Install(
         HMODULE gameModule,
@@ -110,8 +119,10 @@ namespace fable::game::creature::animation
                 "CreatureActionAnimationHookProtectionRestoreFailed",
                 "bytes-restored-but-page-protection-restore-failed");
         }
+        WatchLocalHero(nullptr);
         DetachActionLifecycleObserver();
         scopedSelectionToken_ = 0;
+        SetOwnerAttackRequest(nullptr, 0, 0);
         if (active_ == this) active_ = nullptr;
         gameModule_ = nullptr;
         original_ = nullptr;
@@ -180,6 +191,13 @@ namespace fable::game::creature::animation
         available->creature = creature;
         available->animationState = animationState;
         available->animationId = animationId;
+        if (ownerRequest_ && static_cast<std::uint32_t>(ownerRequest_->animationId) == animationId)
+        {
+            available->hasOwnerRequest = true;
+            available->ownerRequest = *ownerRequest_;
+            available->blendFrames = ownerBlendFrames_;
+            available->options = ownerOptions_;
+        }
         strncpy_s(
             available->actionType.data(),
             available->actionType.size(),
@@ -458,7 +476,7 @@ namespace fable::game::creature::animation
     bool CreatureActionAnimationSelectionHook::TryApplySelection(
         void* animationState,
         const native::AnimationPlaybackRequest& request,
-        native::AnimationPlaybackRequest& replacement) noexcept
+        native::AnimationPlaybackRequest& replacement, int& blendFrames, int& options) noexcept
     {
         if (pendingSelectionCount_.load(std::memory_order_acquire) == 0)
         {
@@ -533,6 +551,12 @@ namespace fable::game::creature::animation
                 static_cast<std::uint32_t>(request.animationId);
             replacement.animationId =
                 static_cast<std::int32_t>(pending.animationId);
+            if (pending.hasOwnerRequest)
+            {
+                replacement = pending.ownerRequest;
+                blendFrames = pending.blendFrames;
+                options = pending.options;
+            }
             pending.applied = true;
             completed = pending;
             pending = {};
@@ -579,6 +603,61 @@ namespace fable::game::creature::animation
         }
     }
 
+    void CreatureActionAnimationSelectionHook::WatchLocalHero(void* hero) noexcept
+    {
+        auto* self = active_; if (!self) return;
+        void* state = hero ? ResolveAnimationState(hero) : nullptr;
+        AcquireSRWLockExclusive(&self->ownerCaptureLock_);
+        if (hero != self->watchedHero_ || state != self->watchedState_)
+        {
+            self->ownerFirst_ = self->ownerCount_ = 0;
+            self->lastOwnerAction_ = nullptr; self->lastOwnerAt_ = 0;
+            self->watchedHero_ = hero; self->watchedState_ = state;
+        }
+        ReleaseSRWLockExclusive(&self->ownerCaptureLock_);
+    }
+
+    bool CreatureActionAnimationSelectionHook::PopOwnerAttack(OwnerAttackFrame& frame) noexcept
+    {
+        auto* self = active_; if (!self) return false;
+        AcquireSRWLockExclusive(&self->ownerCaptureLock_);
+        const bool available = self->ownerCount_ != 0;
+        if (available)
+        {
+            frame = self->ownerFrames_[self->ownerFirst_];
+            self->ownerFirst_ = (self->ownerFirst_ + 1) % self->ownerFrames_.size(); --self->ownerCount_;
+        }
+        ReleaseSRWLockExclusive(&self->ownerCaptureLock_);
+        return available;
+    }
+
+    void CreatureActionAnimationSelectionHook::CaptureOwnerAttack(void* state, const native::AnimationPlaybackRequest& request,
+        int blendFrames, int options) noexcept
+    {
+        if (request.animationId <= 0 || request.animationId > 0xFFFF) return;
+        OwnerAttackFrame frame;
+        AcquireSRWLockShared(&ownerCaptureLock_);
+        if (state == watchedState_) frame.creature = watchedHero_;
+        ReleaseSRWLockShared(&ownerCaptureLock_);
+        if (!frame.creature || actions::CreatureActionLifecycleObserver::IsActiveActionAuthoritativeReplay(frame.creature)) return;
+        __try { frame.action = *reinterpret_cast<void**>(static_cast<unsigned char*>(frame.creature) + 0x120); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return; }
+        if (!frame.action || !actions::CreatureActionLifecycleObserver::DescribeActionType(frame.action, frame.actionType, sizeof(frame.actionType))) return;
+        const bool attack = std::strstr(frame.actionType, "Attack") || std::strstr(frame.actionType, "Flourish") || std::strstr(frame.actionType, "Strike");
+        if (!attack || std::strstr(frame.actionType, "Response") || std::strstr(frame.actionType, "HeroLoadRanged") ||
+            std::strstr(frame.actionType, "FireMissile")) return;
+        if (actions::CreatureActionLifecycleObserver::DescribeActionAnimationId(frame.action) != static_cast<unsigned int>(request.animationId)) return;
+        frame.request = request; frame.request.reserved = 0; frame.blendFrames = blendFrames; frame.options = options; frame.observedAt = GetTickCount64();
+        AcquireSRWLockExclusive(&ownerCaptureLock_);
+        if (frame.creature == watchedHero_ && ownerCount_ < ownerFrames_.size() &&
+            !(lastOwnerAction_ == frame.action && lastOwnerAnimation_ == request.animationId && frame.observedAt - lastOwnerAt_ < 100))
+        {
+            ownerFrames_[(ownerFirst_ + ownerCount_) % ownerFrames_.size()] = frame; ++ownerCount_;
+            lastOwnerAction_ = frame.action; lastOwnerAnimation_ = request.animationId; lastOwnerAt_ = frame.observedAt;
+        }
+        ReleaseSRWLockExclusive(&ownerCaptureLock_);
+    }
+
     void __fastcall CreatureActionAnimationSelectionHook::Intercept(
         void* animationState,
         void*,
@@ -591,14 +670,16 @@ namespace fable::game::creature::animation
         {
             return;
         }
+        if (request) hook->CaptureOwnerAttack(animationState, *request, blendFrames, options);
         const native::AnimationPlaybackRequest* submitted = request;
+        int submittedBlendFrames = blendFrames, submittedOptions = options;
         native::AnimationPlaybackRequest replacement = {};
         if (request != nullptr && hook->TryApplySelection(
-                animationState, *request, replacement))
+                animationState, *request, replacement, submittedBlendFrames, submittedOptions))
         {
             submitted = &replacement;
         }
-        hook->original_(animationState, submitted, blendFrames, options);
+        hook->original_(animationState, submitted, submittedBlendFrames, submittedOptions);
     }
 
     void CreatureActionAnimationSelectionHook::ReportSelection(

@@ -325,7 +325,10 @@ namespace fable::multiplayer::entities
                 "definition-name-unavailable");
             return true;
         }
-        if (!record.awaitingMaterialization)
+        const bool missingPopulationReplica = !localPopulationOwner_ && record.creature && record.live &&
+            (record.lowSimulation.guard || definitionName.find("GUARD") != std::string::npos) &&
+            now - attempt.firstObservedAt >= 5000;
+        if (!record.awaitingMaterialization && !missingPopulationReplica)
         {
             // A complete host saved-map record was installed before retail
             // Thing construction. If an ordinary live roster member is not

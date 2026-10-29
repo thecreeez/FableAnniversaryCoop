@@ -18,6 +18,7 @@ namespace fable::multiplayer::protocol
         // arguments[0] carries the card mode. Not a lifecycle transition.
         ShowQuestScreen = 5,
         CloseQuestScreen = 6,
+        AcceptQuestCard = 7,
     };
 
     inline constexpr std::size_t MaximumQuestEventNameBytes = 96;

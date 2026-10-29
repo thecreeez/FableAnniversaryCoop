@@ -1,4 +1,5 @@
 #include "ThingSaveProjectionHook.h"
+#include "Game/Persistence/CheckpointLoadScope.h"
 
 #include "Game/NPC/Simulation/DummyVillager/Native/DummyVillagerFunctions.h"
 
@@ -229,19 +230,29 @@ namespace fable::game::entity::persistence
         const std::uint16_t originalMapId = identity.mapId;
         std::uint16_t projectedMapId = originalMapId;
         bool projected = false;
+        const auto* checkpoint = game::persistence::checkpointHeroProjection;
+        const bool projectHero = checkpoint && checkpoint->uid == identity.uid;
+        game::Vector3 savedPosition;
+        game::Vector3* position = nullptr;
         __try
         {
+            if (projectHero)
+            {
+                projectedMapId = checkpoint->map;
+                using GetPosition = game::Vector3*(__thiscall*)(void*);
+                position = reinterpret_cast<GetPosition>(reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)) + 0x01B2B440)(thing);
+                if (position) { savedPosition = *position; *position = checkpoint->position; }
+            }
             const MapOverrideSink sink = hook->sink_.load(
                 std::memory_order_acquire);
-            if (sink != nullptr &&
-                sink(
+            const bool hasOverride = projectHero || (sink != nullptr && sink(
                     hook->sinkContext_.load(std::memory_order_acquire),
                     identity.uid,
                     identity.simulationCreatureUid,
                     identity.definitionIndex,
                     identity.scriptName.data(),
-                    projectedMapId) &&
-                projectedMapId != 0 && projectedMapId != originalMapId)
+                    projectedMapId));
+            if (hasOverride && projectedMapId != 0 && projectedMapId != originalMapId)
             {
                 *reinterpret_cast<std::uint16_t*>(
                     static_cast<std::uint8_t*>(thing) + 0x9A) =
@@ -253,6 +264,7 @@ namespace fable::game::entity::persistence
         }
         __finally
         {
+            if (position) *position = savedPosition;
             if (projected)
             {
                 *reinterpret_cast<std::uint16_t*>(
@@ -282,6 +294,7 @@ namespace fable::game::entity::persistence
         }
 
         const bool loaded = hook->originalLoad_(thing, reader);
+        if (game::persistence::pairedCheckpointLoad.load(std::memory_order_acquire)) return loaded;
         if (!loaded)
         {
             return false;

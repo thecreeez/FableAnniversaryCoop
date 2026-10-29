@@ -1,4 +1,5 @@
 #include "RemoteHeroActor.h"
+#include "Game/HeroPawn/Equipment/Native/HeroWeaponComponent.h"
 
 #include "Game/Creature/Actions/Native/CreatureMotionActionFunctions.h"
 #include "Game/Creature/Companion/Native/CompanionFunctions.h"
@@ -335,7 +336,7 @@ namespace fable::game::hero_pawn::remote
         }
         if (avatar_ == nullptr || !avatar_->IsValid() ||
             playerId_ != state.playerId ||
-            appearanceDefinition_ != state.appearanceDefinition)
+            appearanceDefinition_ != state.appearanceDefinition || childhood_ != state.heroMorph.childhood)
         {
             if (!lifecycle_->Spawn(state))
             {
@@ -507,9 +508,9 @@ namespace fable::game::hero_pawn::remote
         if (!roll)
         {
             if (motion[0] < 0.0f)
-                return CreatureMotionActionFunctions::SetBlocking(gameModule, nativeAvatar_, false);
-            return CreatureMotionActionFunctions::SubmitStartBlocking(gameModule, nativeAvatar_) &&
-                CreatureMotionActionFunctions::SetBlocking(gameModule, nativeAvatar_, true);
+                return equipment::native::HeroWeaponComponent::SetRemoteBlocking(nativeAvatar_, false);
+            if (!equipment::native::HeroWeaponComponent::SetRemoteBlocking(nativeAvatar_, true)) return false;
+            return CreatureMotionActionFunctions::SubmitStartBlocking(gameModule, nativeAvatar_);
         }
         const float direction[3] = {motion[0], motion[1], motion[2]};
         const float stick[2] = {motion[3], motion[4]};

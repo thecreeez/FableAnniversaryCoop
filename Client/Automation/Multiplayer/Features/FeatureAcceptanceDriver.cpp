@@ -10,6 +10,8 @@
 #include <Windows.h>
 
 #include <cstdio>
+#include <cmath>
+#include "Game/HeroPawn/Appearance/Native/HeroMorphComponent.h"
 
 namespace
 {
@@ -104,6 +106,7 @@ namespace fable::automation::multiplayer::features
         enabled_ = enabled;
         if (!enabled_) return;
         host_ = host;
+        sharedWorld_ = GetEnvironmentVariableW(L"ALBIONTOGETHER_SHARED_WORLD_TEST", nullptr, 0) != 0;
         multiplayer_ = &multiplayer;
         diagnostics_ = diagnostics;
         diagnostics_.Event("FeatureAcceptanceArmed", host_ ? "role=host" : "role=guest");
@@ -112,6 +115,7 @@ namespace fable::automation::multiplayer::features
     void FeatureAcceptanceDriver::Shutdown() noexcept
     {
         enabled_ = false;
+        sharedWorld_ = false; sharedStep_ = 0; sharedStarted_ = sharedNext_ = 0;
         multiplayer_ = nullptr;
         phase_.store(Phase::WaitingForWorld, std::memory_order_release);
     }
@@ -130,7 +134,7 @@ namespace fable::automation::multiplayer::features
 
     void FeatureAcceptanceDriver::Tick(const bool remotePresentationReady) noexcept
     {
-        if (!enabled_ || !host_ || multiplayer_ == nullptr ||
+        if (!enabled_ || (!host_ && !sharedWorld_) || multiplayer_ == nullptr ||
             phase_.load(std::memory_order_acquire) != Phase::WaitingForWorld)
         {
             return;
@@ -146,6 +150,7 @@ namespace fable::automation::multiplayer::features
 
     bool FeatureAcceptanceDriver::ProcessGameThreadIdle() noexcept
     {
+        if (enabled_ && sharedWorld_) return ProcessSharedWorld();
         const Phase phase = phase_.load(std::memory_order_acquire);
         if (!enabled_ || !host_ || multiplayer_ == nullptr || phase == Phase::WaitingForWorld ||
             phase == Phase::Done || phase == Phase::Failed)
@@ -233,4 +238,97 @@ namespace fable::automation::multiplayer::features
             return false;
         }
     }
+    bool FeatureAcceptanceDriver::ProcessSharedWorld() noexcept
+    {
+        if (!multiplayer_ || phase_.load() == Phase::Failed || sharedStep_ == 9) return false;
+        auto& c = multiplayer_->Contexts();
+        const auto now = GetTickCount64();
+        if (!sharedStarted_) sharedStarted_ = now;
+        if (now - sharedStarted_ > 180000) { Fail("shared-world-timeout"); return false; }
+        if (now < sharedNext_) return false;
+        auto* hero = static_cast<unsigned char*>(c.players.localHero.NativeHero());
+        if (!hero || !c.world.checkpoints.HasCheckpointForTest() || !c.players.localHero.IsWorldReady()) return false;
+        if (sharedStep_ == 0)
+        {
+            if (c.players.remotePlayers.ActiveCount() == 0) return false;
+            for (const auto& peer : c.transport.remotePlayerChannels.Snapshots())
+            {
+                void* remote = c.players.playerCombatants.FindCreature(peer.state.actorId);
+                game::hero_pawn::appearance::native::HeroMorphResolutionState state;
+                if (!remote || !game::hero_pawn::appearance::native::HeroMorphComponent::InspectResolution(remote, state) || !state.skeletalMeshComponent) return false;
+                auto* mesh = static_cast<unsigned char*>(state.skeletalMeshComponent);
+                if (*reinterpret_cast<float*>(mesh + 0x10C) != 0 || *reinterpret_cast<float*>(mesh + 0x110) != 0 || (mesh[0x128] & 2))
+                { Fail("remote-hero-still-distance-culled"); return false; }
+            }
+            diagnostics_.Event("SharedWorldRangeVerified", "actual remote mesh has no primitive/volume distance culling");
+            if (!host_ && !c.world.worldClock.RequestSleepForTest(0.625f)) return false;
+            sharedStep_ = 1; sharedNext_ = now + 3000; return true;
+        }
+        if (sharedStep_ == 1)
+        {
+            ::fable::multiplayer::protocol::WorldClockMessage clock;
+            if (!c.world.worldClock.ReadForTest(clock) || std::fabs(clock.fraction - 0.625f) > 0.02f) return false;
+            diagnostics_.Event("SharedWorldGuestSleepVerified", "guest request changed actual native clock on this peer; bed UI itself not driven");
+            if (!host_)
+            {
+                bool smashed = false;
+                for (const auto& record : c.entities.entityPresence.LiveEntities().Snapshot())
+                {
+                    if (record.mapId != c.players.localHero.MapId() || record.creature) continue;
+                    void* smash = game::entity::native::ThingComponentAccess::Find(record.thing,
+                        static_cast<game::entity::native::ThingComponentType>(0x4E));
+                    if (!smash) continue;
+                    auto** table = *reinterpret_cast<void***>(smash);
+                    reinterpret_cast<void(__thiscall*)(void*)>(table[30])(smash);
+                    smashed = true; diagnostics_.Event("SharedWorldGuestSmashIssued", "retail smash on existing map object"); break;
+                }
+                if (!smashed) { Fail("fixture-has-no-native-smashable"); return false; }
+            }
+            sharedStep_ = 2; return true;
+        }
+        if (sharedStep_ == 2)
+        {
+            if (c.actions.playerDeath.ConsumeFlaskForAcceptance(hero)) { sharedNext_ = now + 3500; return true; }
+            sharedStep_ = 3;
+            sharedNext_ = now + (host_ ? 20000 : 3500); return true;
+        }
+        if (sharedStep_ == 3)
+        {
+            if (!c.actions.playerDeath.DamageForAcceptance(hero, *reinterpret_cast<float*>(hero + 0xCC) * 3))
+            { Fail("terminal-native-damage-rejected"); return false; }
+            sharedStep_ = 4; sharedNext_ = now + 3000; return true;
+        }
+        if (sharedStep_ == 4)
+        {
+            if (!c.actions.playerDeath.IsTerminalDead()) return false;
+            auto* card = static_cast<unsigned char*>(game::entity::native::ThingComponentAccess::Find(hero,
+                static_cast<game::entity::native::ThingComponentType>(0xFC)));
+            const bool deathCard = card && card[0xD] && *reinterpret_cast<int*>(card + 0x24) == 3;
+            if (deathCard != host_) { Fail("wrong-peer-native-death-card"); return false; }
+            if (!host_ && *reinterpret_cast<float*>(hero + 0xD0) > 0.01f) { Fail("dead-guest-was-healed"); return false; }
+            diagnostics_.Event("SharedWorldTerminalDeathVerified", host_ ? "host retail death card" : "guest remains dead; no native loading/death card");
+            if (host_ && !c.world.checkpoints.RequestReloadForTest()) { Fail("native-checkpoint-selector-rejected"); return false; }
+            sharedStep_ = 5; return true;
+        }
+        if (sharedStep_ == 5 && c.world.checkpoints.LoadedAttemptForTest() && !c.world.checkpoints.IsBarrierActive())
+        {
+            // Native retirement continues after the world-ready callback.
+            // The reported guest crash was ~1s after checkpoint completion.
+            sharedStep_ = 6;
+            sharedNext_ = now + 5000;
+            return true;
+        }
+        if (sharedStep_ == 6 && !c.world.checkpoints.IsBarrierActive())
+        {
+            if (c.actions.playerDeath.IsTerminalDead()) { Fail("death-state-survived-checkpoint-load"); return false; }
+            const float health = *reinterpret_cast<float*>(hero + 0xD0);
+            if (health <= 0 || std::fabs(health - c.world.checkpoints.SavedHealthForTest()) > 1)
+            { Fail("local-checkpoint-hero-health-not-restored"); return false; }
+            if (!c.players.remotePlayers.ActiveCount()) return false;
+            diagnostics_.Event("SharedWorldCheckpointVerified", "paired native checkpoint restored this player's saved HP and rebuilt remote Hero");
+            sharedStep_ = 9; return true;
+        }
+        return false;
+    }
+
 }

@@ -32,6 +32,7 @@ namespace
         case QuestEventOperation::Fail: return "fail";
         case QuestEventOperation::ShowQuestScreen: return "show-quest-screen";
         case QuestEventOperation::CloseQuestScreen: return "close-quest-screen";
+        case QuestEventOperation::AcceptQuestCard: return "accept-quest-card";
         }
         return "unknown";
     }
@@ -124,6 +125,7 @@ namespace fable::multiplayer::persistence
         hook_.SetDuplicateFilter(nullptr, nullptr);
         screenHook_.Shutdown();
         pendingCloses_.clear();
+        acceptedCards_.clear();
         screenShownAt_.clear();
         screenAuthority_ = nullptr;
         screenHero_ = nullptr;
@@ -141,6 +143,15 @@ namespace fable::multiplayer::persistence
             lastOperation_.clear();
         }
         enabled_ = false;
+    }
+
+    void QuestEventReplicationService::ResetForReload() noexcept
+    {
+        pending_.clear(); outbound_.clear(); pendingCloses_.clear(); acceptedCards_.clear(); screenShownAt_.clear();
+        QuestLifecycleHook::Observation observation;
+        while (hook_.PopObservation(observation)) {}
+        std::lock_guard<std::mutex> lock(lastOperationMutex_);
+        lastOperation_.clear();
     }
 
     bool QuestEventReplicationService::Process()
@@ -201,6 +212,8 @@ namespace fable::multiplayer::persistence
     bool QuestEventReplicationService::PublishLocal(
         const QuestLifecycleHook::Observation& observation)
     {
+        if (observation.operation == QuestEventOperation::AcceptQuestCard)
+            acceptedCards_.insert(observation.name);
         QuestEventMessage message;
         message.operation = observation.operation;
         std::memcpy(message.arguments, observation.arguments, sizeof(message.arguments));
@@ -215,7 +228,13 @@ namespace fable::multiplayer::persistence
         try
         {
             std::lock_guard<std::mutex> lock(lastOperationMutex_);
-            lastOperation_[observation.name] = observation.operation;
+            const auto last = lastOperation_.find(observation.name);
+            // Retail finishes card-less quests with Complete then Deactivate, but
+            // IsCompleted remains false. Keep the terminal fence until a fresh
+            // Activate; otherwise a delayed host echo pays out completion again.
+            if (observation.operation != QuestEventOperation::Deactivate || last == lastOperation_.end() ||
+                (last->second != QuestEventOperation::Complete && last->second != QuestEventOperation::Fail))
+                lastOperation_[observation.name] = observation.operation;
         }
         catch (...)
         {
@@ -392,6 +411,24 @@ namespace fable::multiplayer::persistence
     {
         if (!hook_.IsManagerReady()) return false;
         const QuestEventMessage& message = pending.message;
+        if (message.operation == QuestEventOperation::AcceptQuestCard)
+        {
+            if (acceptedCards_.find(message.name) == acceptedCards_.end() && !hook_.AcceptCard(message.name, message.arguments[0]))
+            {
+                if (GetTickCount64() - pending.receivedAt < 20000) return false;
+                Report("MultiplayerQuestCardDeferredExpired", message, pending.sourceActorId, "native-card-unavailable");
+                return true;
+            }
+            Report("MultiplayerQuestCardAccepted", message, pending.sourceActorId, "native-card-and-open-menu-refreshed");
+            acceptedCards_.insert(message.name);
+            if (pending.rebroadcast && outbound_.size() < PendingLimit)
+            {
+                auto relay = message;
+                relay.revision = ++nextRevision_;
+                outbound_.push_back(relay);
+            }
+            return true;
+        }
         if (message.operation == QuestEventOperation::CloseQuestScreen)
         {
             const auto* lease = screenAuthority_ != nullptr ? screenAuthority_->FindMapLease(
@@ -458,7 +495,10 @@ namespace fable::multiplayer::persistence
                 try
                 {
                     std::lock_guard<std::mutex> lock(lastOperationMutex_);
-                    lastOperation_[message.name] = message.operation;
+                    const auto last = lastOperation_.find(message.name);
+                    if (message.operation != QuestEventOperation::Deactivate || last == lastOperation_.end() ||
+                        (last->second != QuestEventOperation::Complete && last->second != QuestEventOperation::Fail))
+                        lastOperation_[message.name] = message.operation;
                 }
                 catch (...)
                 {
@@ -467,6 +507,7 @@ namespace fable::multiplayer::persistence
             }
             Report(accepted ? "MultiplayerQuestEventApplied" : "MultiplayerQuestEventApplyFailed",
                 message, pending.sourceActorId, accepted ? "native" : "native-rejected");
+            if (accepted) hook_.RefreshOpenMenu();
         }
         else
         {

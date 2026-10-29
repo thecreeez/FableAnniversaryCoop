@@ -62,6 +62,7 @@ namespace fable::multiplayer::persistence
             std::uint64_t peerSetRevision) override;
         [[nodiscard]] bool IsGuestCollectionReady() const noexcept override;
         bool CompleteInitialGuestHeroConstruction() noexcept;
+        bool BeginCheckpointHeroLoad() noexcept;
         [[nodiscard]] bool IsGuestGrantReady(
             std::uint16_t mapId,
             std::uint64_t baselineRevision) const noexcept override;

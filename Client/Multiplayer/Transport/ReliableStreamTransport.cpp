@@ -174,7 +174,9 @@ namespace fable::multiplayer
                 type == PacketType::ChestOpen ||
                 type == PacketType::DemonDoorOpen ||
                 type == PacketType::KillExperience ||
-                type == PacketType::EnemyTarget;
+                type == PacketType::EnemyTarget ||
+                type == PacketType::WorldClock || type == PacketType::SleepRequest ||
+                type == PacketType::Destructible || type == PacketType::Checkpoint || type == PacketType::Weather || type == PacketType::Effect;
         }
         if (streamId.kind == ReliableStreamKind::World)
         {

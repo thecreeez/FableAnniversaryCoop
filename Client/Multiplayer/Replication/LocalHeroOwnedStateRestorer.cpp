@@ -1,6 +1,8 @@
 #include "LocalHeroOwnedStateRestorer.h"
 
 #include "Game/Entity/EntityService.h"
+#include "Game/Entity/Entity.h"
+#include "Game/Creature/Actions/Hooks/CreatureActionLifecycleObserver.h"
 #include "Game/HeroPawn/Appearance/Native/HeroAttachableAppearanceComponent.h"
 #include "Game/HeroPawn/Appearance/Native/HeroClothingComponent.h"
 #include "Game/HeroPawn/Appearance/Native/HeroMorphComponent.h"
@@ -9,25 +11,27 @@
 #include <Windows.h>
 
 #include <cstdio>
+#include <cstring>
 
 namespace
 {
     constexpr std::uint64_t RestoreRetryMilliseconds = 100;
 
-    bool SameNativeEquipmentState(
-        const fable::game::hero_pawn::equipment::HeroEquipmentState& left,
-        const fable::game::hero_pawn::equipment::HeroEquipmentState& right)
-        noexcept
+    bool HasPendingNativeWeaponAction(void* creature) noexcept
     {
-        // transitionActionId identifies the reliable action that produced a
-        // live mutation. It is deliberately absent from a freshly captured
-        // native construction baseline and must not hold map restoration open.
-        return left.valid == right.valid &&
-            left.meleeDefinitionIndex == right.meleeDefinitionIndex &&
-            left.rangedDefinitionIndex == right.rangedDefinitionIndex &&
-            left.meleeAttachmentSlot == right.meleeAttachmentSlot &&
-            left.rangedAttachmentSlot == right.rangedAttachmentSlot &&
-            left.activeFamily == right.activeFamily;
+        void* action = nullptr;
+        __try
+        {
+            const auto* bytes = static_cast<const unsigned char*>(creature);
+            // CThingCreature action queue, verified in native update01B42E20.
+            if (*reinterpret_cast<const unsigned int*>(bytes + 0x12C)) return true;
+            action = *reinterpret_cast<void* const*>(bytes + 0x120);
+            if (!action || *(static_cast<const unsigned char*>(action) + 0x61)) return false;
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return true; }
+        char type[128] = {};
+        return !fable::game::creature::actions::CreatureActionLifecycleObserver::DescribeActionType(action, type, sizeof(type)) ||
+            std::strstr(type, "Sheathe") || std::strstr(type, "Unsheathe");
     }
 }
 
@@ -70,6 +74,7 @@ namespace fable::multiplayer::replication
 
     LocalHeroRestoreResult LocalHeroOwnedStateRestorer::Reconcile(
         game::EntityService& entities,
+        game::Entity& hero,
         void* const nativeHero,
         const game::hero_pawn::appearance::HeroMorphState& morph,
         const game::hero_pawn::appearance::HeroClothingState& clothing,
@@ -189,14 +194,26 @@ namespace fable::multiplayer::replication
         }
         definitionsRequested_ = false;
         definitionsRequestedAt_ = 0;
-        if (!SameNativeEquipmentState(equipment, desiredEquipment))
+        const bool nativeTransition = HasPendingNativeWeaponAction(nativeHero);
+        if (!presentationRequested_)
         {
-            return game::hero_pawn::equipment::native::HeroWeaponComponent::
-                    ApplyPresentation(
-                        entities, nativeHero, desiredEquipment)
-                ? LocalHeroRestoreResult::Pending
-                : failed(6, "weapon-presentation");
+            // Local Heroes must enter the retail inventory/action path. Raw
+            // carry-slot edits are only a projection: the next inventory
+            // reconciliation can immediately remove those attached weapons.
+            using game::creature::actions::CreatureActionLifecycleObserver;
+            CreatureActionLifecycleObserver::BeginAuthoritativeReplay();
+            const bool requested = game::hero_pawn::equipment::native::HeroWeaponComponent::RequestActiveFamily(
+                entities.Interface(), hero.NativeHandle(), desiredEquipment.activeFamily);
+            CreatureActionLifecycleObserver::EndAuthoritativeReplay();
+            if (!requested) return failed(6, "native-weapon-presentation-request");
+            presentationRequested_ = true;
+            diagnostics.Event("MultiplayerLocalHeroNativeWeaponRestoreRequested", "retail draw/sheathe action requested; waiting for native completion");
+            return LocalHeroRestoreResult::Pending;
         }
+        if (nativeTransition)
+            return LocalHeroRestoreResult::Pending;
+        if (equipment.activeFamily != desiredEquipment.activeFamily)
+            diagnostics.Event("MultiplayerLocalHeroWeaponRestoreNativePolicy", "retail selected a different weapon family; publishing actual state without forcing town/script restrictions");
 
         char detail[160] = {};
         std::snprintf(
@@ -229,5 +246,6 @@ namespace fable::multiplayer::replication
         pending_ = false;
         definitionsRequested_ = false;
         modifiersDegraded_ = false;
+        presentationRequested_ = false;
     }
 }

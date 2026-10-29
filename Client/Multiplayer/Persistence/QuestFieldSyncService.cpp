@@ -69,6 +69,12 @@ namespace fable::multiplayer::persistence
         enabled_ = recorder_.Install(GetModuleHandleW(nullptr), diagnostics_);
     }
 
+    void QuestFieldSyncService::ResetForReload() noexcept
+    {
+        mappedGeneration_ = 0; nextRemapAt_ = 0; nextScanAt_ = 0;
+        fields_.clear(); known_.clear(); inbound_.clear(); outbound_.clear(); mappedOnce_ = false;
+    }
+
     void QuestFieldSyncService::Shutdown() noexcept
     {
         recorder_.Shutdown();

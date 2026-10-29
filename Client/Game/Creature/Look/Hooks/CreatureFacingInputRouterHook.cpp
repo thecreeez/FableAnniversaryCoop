@@ -560,6 +560,15 @@ namespace fable::game::creature::look
 
         if (validReplicatedInput)
         {
+            // Retail attacks and knockdowns may integrate root motion during
+            // original_(). A replica's transform belongs to its owner, including
+            // height; do not leave that second simulation's displacement visible.
+            if (controlledPhysics)
+                ::fable::game::creature::locomotion::native::PhysicsWorldPositionFunctions::SetControlledWorldPosition(
+                    router->gameModule_, navigator, replicatedInput.position);
+            else
+                ::fable::game::creature::locomotion::native::PhysicsWorldPositionFunctions::SetNavigatorWorldPosition(
+                    router->gameModule_, navigator, replicatedInput.position);
             float observedFacing = 0.0f;
             bool facingObserved =
                 native::CreatureLookFunctions::ReadNavigatorFacing(

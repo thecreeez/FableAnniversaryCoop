@@ -192,6 +192,8 @@ int RunTransitionScenario(MultiplayerTestSession& session)
     p.guest().game.window = automation::FindMainWindow(p.guest().game.processId);
     const bool survived = completed && routeMatches &&
         VerifySingleOwner(hostEvents, guestEvents, e) && health &&
+        diagnostics::EventDetailContains(guestEvents, "MultiplayerWorldClockApplied",
+            ("map_id=" + std::to_string(e.destinationMapId)).c_str()) &&
         VerifyLiveness(p.host(), p.guest(), hostEvents, guestEvents);
     const bool guestStopped = runtime::CloseCreatedProcess(p.guest().game.process.get(), p.guest().game.processId, p.guest().game.shutdownEvent.get());
     const bool hostStopped = runtime::CloseCreatedProcess(p.host().game.process.get(), p.host().game.processId, p.host().game.shutdownEvent.get());

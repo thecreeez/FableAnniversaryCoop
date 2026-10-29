@@ -6,15 +6,16 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 
 namespace
 {
     using fable::multiplayer::protocol::QuestEventOperation;
 
-    // Always-running retail bookkeeping quest with plain int progress fields.
-    constexpr const char* FieldQuest = "GameflowAssistance";
-    constexpr const char* HostField = "WillEnergyWarningsGiven";
-    constexpr const char* GuestField = "SaveWarningsGiven";
+    // Story state, unlike intentionally local GameflowAssistance warnings.
+    constexpr const char* FieldQuest = "Q_SunnyvaleMaster";
+    constexpr const char* HostField = "ArcheryHighScore";
+    constexpr const char* GuestField = "ArcheryHighScore";
     constexpr std::uint32_t HostFieldValue = 77;
     constexpr std::uint32_t GuestFieldValue = 5;
     // A harmless global world flag from the master-quest data object.
@@ -74,6 +75,9 @@ namespace fable::automation::multiplayer::quest
 
     bool QuestSyncAcceptanceDriver::ProcessGameThreadIdle() noexcept
     {
+        if (enabled_ && multiplayer_ && multiplayer_->Contexts().players.localHero.IsWorldReady() &&
+            multiplayer_->Contexts().players.remotePlayers.ActiveCount() != 0)
+            CheckWorldClock(GetTickCount64());
         const Phase phase = phase_.load(std::memory_order_acquire);
         if (!enabled_ || multiplayer_ == nullptr || phase == Phase::WaitingForWorld ||
             phase == Phase::Done || phase == Phase::Failed)
@@ -101,6 +105,8 @@ namespace fable::automation::multiplayer::quest
         switch (phase)
         {
         case Phase::Baseline:
+            if (!host_ && !hook.OpenMenuForTest()) { Fail("guest-quest-menu-not-opened"); return false; }
+            if (!host_) diagnostics_.Event("QuestSyncMenuOpened", "guest quest inventory remains open during remote changes");
             for (std::size_t index = 0; index < CandidateCount; ++index)
             {
                 baselineActive_[index] = hook.IsActive(Candidates[index]);
@@ -124,6 +130,8 @@ namespace fable::automation::multiplayer::quest
                     QuestEventOperation::Activate, Candidates[index], arguments);
                 if (accepted && hook.IsActive(Candidates[index]))
                 {
+                    if (!hook.OpenMenuForTest()) { Fail("host-quest-menu-not-opened"); return false; }
+                    diagnostics_.Event("QuestSyncMenuOpened", "host quest inventory remains open during remote changes");
                     chosen_ = index;
                     completionTarget_ = index;
                     std::snprintf(detail, sizeof(detail), "quest=%s", Candidates[index]);
@@ -305,6 +313,9 @@ namespace fable::automation::multiplayer::quest
             {
                 std::snprintf(detail, sizeof(detail), "quest=%s field=%s value=%u", WorldFlagQuest, WorldFlag, value);
                 diagnostics_.Event("WorldFlagGuestObserved", detail);
+                char cardQuest[128] = {};
+                if (!hook.AcceptAvailableCardForTest(cardQuest)) { Fail("no-retail-quest-card-could-be-accepted"); return false; }
+                diagnostics_.Event("QuestSyncGuestCardAccepted", cardQuest);
                 Enter(Phase::Done, now);
                 return true;
             }
@@ -315,6 +326,80 @@ namespace fable::automation::multiplayer::quest
         default:
             return false;
         }
+    }
+
+    void QuestSyncAcceptanceDriver::CheckWorldClock(const std::uint64_t now) noexcept
+    {
+        auto& clock = multiplayer_->Contexts().world.worldClock;
+        ::fable::multiplayer::protocol::WorldClockMessage state;
+        if (!clock.ReadForTest(state)) return;
+        if (!clockStartedAt_)
+        {
+            clockStartedAt_ = now;
+            savedClockFraction_ = state.fraction; savedClockRate_ = state.rate; savedClockDay_ = state.day;
+            // Deliberately disagree before the first host baseline.
+            if (!host_) clock.SetForTest(0.01f, 0, 300);
+        }
+        const auto age = now - clockStartedAt_;
+        if (host_)
+        {
+            if (clockStage_ >= 4 && clockStage_ <= 6)
+            {
+                const auto elapsed = clockDrivenAt_ ? now - clockDrivenAt_ : 0;
+                clock.AdvanceForTest(static_cast<float>(elapsed < 250 ? elapsed : 250) / 1000.0f);
+            }
+            clockDrivenAt_ = now;
+            const unsigned int stage = age < 12000 ? static_cast<unsigned int>(age / 4000) :
+                age < 20000 ? 2 : 3 + static_cast<unsigned int>((age - 20000) / 4000);
+            if (stage < clockStage_) return;
+            bool set = true;
+            switch (stage)
+            {
+            case 0: set = clock.SetForTest(0.5f, 0, 400); break;
+            case 1: set = clock.SetForTest(0.95f, 0, 401); break;
+            case 2: set = clock.SetForTest(0.999f, 0.02f, 402); break;
+            case 3: set = clock.SetForTest(0.1f, 0, 404) && clock.SetForTest(0.8f, 0.02f, 404, 3); break;
+            case 4: set = clock.SetForTest(0.4f, 0.02f, 405) && clock.FreezeForTest(true); break;
+            case 5: set = clock.FreezeForTest(false) && clock.SetForTest(0.6f, 0.02f, 406); break;
+            case 6: set = clock.SetForTest(savedClockFraction_, savedClockRate_, savedClockDay_); break;
+            default: return;
+            }
+            if (!set) { Fail("native-world-clock-test-set-failed"); return; }
+            clockStage_ = stage + 1;
+            char detail[64]; std::snprintf(detail, sizeof(detail), "stage=%u", stage);
+            diagnostics_.Event("WorldClockHostTestSet", detail);
+            return;
+        }
+        unsigned int bit = 0;
+        if (!clockPauseObserved_ && state.day == 403 && clock.HostWorldPausedForTest())
+        {
+            if (!clockPausedAt_ || std::fabs(clockPausedFraction_ - state.fraction) > 0.001f)
+            { clockPausedAt_ = now; clockPausedFraction_ = state.fraction; }
+            if (now - clockPausedAt_ >= 1000)
+            {
+                clockPauseObserved_ = true;
+                diagnostics_.Event("WorldClockGuestWorldPauseObserved", "host inventory stopped world update; guest native time remained stable");
+            }
+        }
+        if (state.day == 400 && std::fabs(state.fraction - 0.5f) < 0.001f && !clock.IsNightForTest()) bit = 1;
+        if (state.day == 401 && std::fabs(state.fraction - 0.95f) < 0.001f && clock.IsNightForTest()) bit = 2;
+        if (state.day == 403 && state.fraction < 0.1f && state.rate == 0.02f) bit = 4;
+        if (state.day == 404 && state.jumping && state.fraction > 0.1f && state.fraction < 0.8f) bit = 8;
+        if (state.day == 405 && std::fabs(state.fraction - 0.4f) < 0.001f)
+        {
+            if (!clockFrozenAt_) clockFrozenAt_ = now;
+            if (now - clockFrozenAt_ >= 1000) bit = 16;
+        }
+        if (state.day == 406 && state.fraction > 0.62f && state.rate == 0.02f) bit = 32;
+        if (bit && !(clockObserved_ & bit))
+        {
+            clockObserved_ |= bit;
+            char detail[96]; std::snprintf(detail, sizeof(detail), "mask=%u day=%d fraction=%.6f", clockObserved_, state.day, state.fraction);
+            diagnostics_.Event("WorldClockGuestTestObserved", detail);
+            if (clockObserved_ == 63) diagnostics_.Event("WorldClockGuestAcceptancePassed", "native noon/night/midnight/animated-sleep/freeze/resume matched host");
+        }
+        if (age > 40000 && clockObserved_ != 63 && clockObserved_ != 0xFFFF)
+        { clockObserved_ = 0xFFFF; Fail("world-clock-native-states-did-not-converge"); }
     }
 
     void QuestSyncAcceptanceDriver::Enter(const Phase phase, const std::uint64_t now) noexcept
@@ -352,5 +437,9 @@ namespace fable::automation::multiplayer::quest
         lastProbeAt_ = 0;
         host_ = false;
         enabled_ = false;
+        clockStartedAt_ = clockFrozenAt_ = 0;
+        clockDrivenAt_ = 0;
+        clockPausedAt_ = 0; clockPauseObserved_ = false; clockPausedFraction_ = 0;
+        clockStage_ = clockObserved_ = 0;
     }
 }

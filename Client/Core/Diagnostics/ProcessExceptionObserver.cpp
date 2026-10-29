@@ -185,12 +185,18 @@ using namespace fable::core::target;
             return EXCEPTION_CONTINUE_SEARCH;
         }
 
-        const unsigned int observation =
-            DiagnosticsContext().lowAddressAccessViolationsLogged.fetch_add(1, std::memory_order_relaxed) + 1;
-        if (observation > MaximumLoggedProcessExceptions)
+        // Handled RTTI probes in the client must not consume the entire budget
+        // before a later retail-world fault (notably native reload teardown).
+        static std::atomic_uint gameExceptionsLogged{0};
+        static std::atomic_uint clientExceptionsLogged{0};
+        const unsigned int scopedObservation = (insideGame ? gameExceptionsLogged : clientExceptionsLogged).
+            fetch_add(1, std::memory_order_relaxed) + 1;
+        if (scopedObservation > MaximumLoggedProcessExceptions)
         {
             return EXCEPTION_CONTINUE_SEARCH;
         }
+        const unsigned int observation =
+            DiagnosticsContext().lowAddressAccessViolationsLogged.fetch_add(1, std::memory_order_relaxed) + 1;
 
         NativeFault fault = {};
         fault.stage = "process-wide low-address access-violation observer";
@@ -210,6 +216,25 @@ using namespace fable::core::target;
         if (exceptionPointers->ContextRecord != nullptr)
         {
             const CONTEXT* context = exceptionPointers->ContextRecord;
+            if (insideGame && instruction >= gameBase + 0x01B2E330 && instruction < gameBase + 0x01B2E530)
+            {
+                // CThing::vf22's pending-component list at +58 is the fault
+                // site of the guest checkpoint dump. Capture its incarnation
+                // while still available; the minidump omits these heap bytes.
+                __try
+                {
+                    const auto* thing = reinterpret_cast<const unsigned char*>(context->Ebx);
+                    const auto* head = *reinterpret_cast<void* const* const*>(thing + 0x58);
+                    LogFormat("Thing update fault: thing=%p vtable=%p uid=%016llX map=%u pending_head=%p next=%p previous=%p pending_count=%u flags=%08lX.",
+                        thing, *reinterpret_cast<void* const*>(thing),
+                        *reinterpret_cast<const unsigned long long*>(thing + 0x14),
+                        *reinterpret_cast<const unsigned short*>(thing + 0x9A), head,
+                        head ? head[0] : nullptr, head ? head[1] : nullptr,
+                        *reinterpret_cast<const unsigned int*>(thing + 0x5C),
+                        *reinterpret_cast<const DWORD*>(thing + 0x9C));
+                }
+                __except(EXCEPTION_EXECUTE_HANDLER) { LogFormat("Thing update fault: native Thing/list memory is unreadable."); }
+            }
             LogFormat(
                 "Process exception registers: eax=%08lX ebx=%08lX ecx=%08lX edx=%08lX esi=%08lX edi=%08lX ebp=%08lX esp=%08lX eip=%08lX.",
                 context->Eax,

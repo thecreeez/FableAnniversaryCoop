@@ -86,6 +86,9 @@ namespace fable::game::hero_pawn::appearance
     {
         bool valid = false;
         bool child = false;
+        // Native CTCHeroMorph+78 is Teenager. Oakvale's child is a separate
+        // CREATURE_HERO_CHILD definition and must not be inferred from age alone.
+        bool childhood = false;
         float strength = 0.0f;
         float berserk = 0.0f;
         float will = 0.0f;
@@ -111,7 +114,7 @@ namespace fable::game::hero_pawn::appearance
 
         [[nodiscard]] bool Equals(const HeroMorphState& other) const noexcept
         {
-            return valid == other.valid && child == other.child &&
+            return valid == other.valid && child == other.child && childhood == other.childhood &&
                 strength == other.strength && berserk == other.berserk &&
                 will == other.will && skill == other.skill &&
                 age == other.age && alignment == other.alignment &&

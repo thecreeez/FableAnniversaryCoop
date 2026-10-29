@@ -36,7 +36,9 @@ namespace fable::game::hero_pawn::equipment::native
     {
     public:
         static bool ReadCombatStance(void* creature) noexcept;
-        static bool SetRemoteCombatStance(void* creature, bool active) noexcept;
+        static bool CaptureCombatPresentation(void* creature, HeroEquipmentState& state) noexcept;
+        static bool SetRemoteBlocking(void* creature, bool blocking) noexcept;
+        static bool SetRemoteCombatStance(void* creature, bool active, bool flourishReady = false, bool combatStrafing = false, bool blocking = false) noexcept;
         static void ClearRemoteCombatStance(void* creature) noexcept;
         static constexpr std::uintptr_t ExpectedVtableRva = 0x02B04D84;
 

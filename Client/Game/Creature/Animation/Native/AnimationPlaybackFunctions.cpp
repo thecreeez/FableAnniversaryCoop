@@ -94,7 +94,7 @@ namespace fable::game::creature::animation::native
         return true;
     }
 
-    AnimationPlaybackAttempt AnimationPlaybackFunctions::Play(
+    AnimationPlaybackAttempt AnimationPlaybackFunctions::Prepare(
         void* creature,
         std::uint32_t animationId,
         std::uint32_t flags) const noexcept
@@ -180,6 +180,14 @@ namespace fable::game::creature::animation::native
             }
         }
 
+        attempt.result = AnimationPlaybackResult::Played;
+        return attempt;
+    }
+
+    AnimationPlaybackAttempt AnimationPlaybackFunctions::Play(void* creature, std::uint32_t animationId, std::uint32_t flags) const noexcept
+    {
+        auto attempt = Prepare(creature, animationId, flags);
+        if (attempt.result != AnimationPlaybackResult::Played) return attempt;
         AnimationPlaybackRequest request = {};
         __try
         {
@@ -201,6 +209,16 @@ namespace fable::game::creature::animation::native
             attempt.result = AnimationPlaybackResult::SubmissionFault;
             return attempt;
         }
+    }
+
+    AnimationPlaybackAttempt AnimationPlaybackFunctions::PlayRequest(void* creature, const AnimationPlaybackRequest& request,
+        int blendFrames, int options) const noexcept
+    {
+        auto result = Prepare(creature, static_cast<std::uint32_t>(request.animationId), request.flags & SupportedFlags);
+        if (result.result != AnimationPlaybackResult::Played) return result;
+        __try { submitRequest_(result.animationState, &request, blendFrames, options); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { result.result = AnimationPlaybackResult::SubmissionFault; }
+        return result;
     }
 
     const char* AnimationPlaybackFunctions::ResultName(

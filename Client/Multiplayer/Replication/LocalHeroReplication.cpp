@@ -200,8 +200,7 @@ namespace fable::multiplayer::replication
         const float facing = ReadHeroFacing();
 
         game::hero_pawn::appearance::HeroMorphState heroMorph;
-        if (!game::hero_pawn::appearance::native::HeroMorphComponent::Capture(
-                nativeHero_, heroMorph))
+        if (!CaptureMorph(heroMorph))
         {
             return false;
         }
@@ -210,18 +209,26 @@ namespace fable::multiplayer::replication
             game::hero_pawn::appearance::native::HeroMorphComponent::
                 CaptureBoneScaleState(nativeHero_, heroBoneScales);
         game::hero_pawn::appearance::HeroClothingState heroClothing;
-        const bool clothingReady =
+        bool clothingReady =
             game::hero_pawn::appearance::native::HeroClothingComponent::Capture(
                 nativeHero_, heroClothing);
         game::hero_pawn::appearance::HeroAppearanceModifierState modifiers;
-        const bool modifiersReady =
+        bool modifiersReady =
             game::hero_pawn::appearance::native::
                 HeroAttachableAppearanceComponent::Capture(
                     nativeHero_, modifiers);
         game::hero_pawn::equipment::HeroEquipmentState equipment;
-        const bool equipmentReady =
+        bool equipmentReady =
             game::hero_pawn::equipment::native::HeroWeaponComponent::Capture(
                 nativeHero_, equipment);
+        if (heroMorph.childhood)
+        {
+            // The stock child can lack adult inventory/morph components. An
+            // absent component is an empty loadout, not a pending adult graph.
+            if (!clothingReady) { heroClothing = {}; heroClothing.valid = true; clothingReady = true; }
+            if (!modifiersReady) { modifiers = {}; modifiers.valid = true; modifiersReady = true; }
+            if (!equipmentReady) { equipment = {}; equipment.valid = true; equipmentReady = true; }
+        }
         if (!equipmentReady)
         {
             game::hero_pawn::equipment::native::HeroWeaponInspection inspection;
@@ -250,6 +257,19 @@ namespace fable::multiplayer::replication
             // channel or advertise a partial Hero while its native appearance
             // or inventory graph is still settling.
             return false;
+        }
+        if (transitionActive_ && ownedStateRestorer_.HasPendingState())
+        {
+            const auto* preserved = ownedStateRestorer_.PreservedState();
+            if (preserved && preserved->heroMorph.childhood != heroMorph.childhood)
+            {
+                // Growing up is a native story transformation, not an ordinary
+                // map move. Do not restore the child's empty adult inventory
+                // and morph inputs over the newly constructed older Hero.
+                std::lock_guard<std::mutex> lock(ownerStateMutex_);
+                ownedStateRestorer_.Clear();
+                diagnostics_.Event("MultiplayerHeroLifeStageChanged", "native story body changed; old-body travel restoration discarded");
+            }
         }
         if (transitionActive_ && ownedStateRestorer_.HasPendingState() &&
             !destinationBaselineOpened_)
@@ -291,6 +311,7 @@ namespace fable::multiplayer::replication
             const LocalHeroRestoreResult restored =
                 ownedStateRestorer_.Reconcile(
                     *entities_,
+                    *hero_,
                     nativeHero_,
                     heroMorph,
                     heroClothing,
@@ -361,6 +382,8 @@ namespace fable::multiplayer::replication
             return false;
         }
         worldReady_ = true;
+        if (heroMorph.childhood)
+            diagnostics_.Event("MultiplayerChildHeroReady", "native CREATURE_HERO_CHILD bound without requiring adult morph/inventory components");
         entryPending_ = false;
         // ReleaseHero detaches the observer during level teardown. Restore it
         // whenever a destination Hero reopens the owner channel.
@@ -621,11 +644,22 @@ namespace fable::multiplayer::replication
         return hero_ != nullptr ? hero_->GetFacing() : 0.0f;
     }
 
+    bool LocalHeroReplication::CaptureMorph(game::hero_pawn::appearance::HeroMorphState& state) const
+    {
+        const bool childhood = hero_ && hero_->GetDefinitionName() == "CREATURE_HERO_CHILD";
+        if (game::hero_pawn::appearance::native::HeroMorphComponent::Capture(nativeHero_, state))
+        { state.childhood = childhood; return true; }
+        if (!childhood) return false;
+        state = {}; state.valid = true; state.childhood = true;
+        return true;
+    }
+
     void LocalHeroReplication::CaptureAppearance(std::uint64_t now)
     {
         if (!worldReady_ || nativeHero_ == nullptr ||
-            (appearanceReady_ &&
-                !appearanceDirty_.load(std::memory_order_acquire)) ||
+            (appearanceReady_ && !appearanceDirty_.load(std::memory_order_acquire) &&
+                CurrentState() && CurrentState()->heroMorph.childhood ==
+                    (hero_->GetDefinitionName() == "CREATURE_HERO_CHILD")) ||
             now < nextAppearanceCaptureAt_)
         {
             return;
@@ -635,15 +669,16 @@ namespace fable::multiplayer::replication
         game::hero_pawn::appearance::HeroClothingState clothing;
         game::hero_pawn::appearance::HeroBoneScaleState boneScales;
         game::hero_pawn::appearance::HeroAppearanceModifierState modifiers;
-        if (!game::hero_pawn::appearance::native::HeroMorphComponent::Capture(
-                nativeHero_, morph) ||
-            !game::hero_pawn::appearance::native::HeroMorphComponent::
-                CaptureBoneScaleState(nativeHero_, boneScales) ||
-            !game::hero_pawn::appearance::native::HeroClothingComponent::Capture(
-                nativeHero_, clothing) ||
-            !game::hero_pawn::appearance::native::
-                HeroAttachableAppearanceComponent::Capture(
-                    nativeHero_, modifiers))
+        const bool morphReady = CaptureMorph(morph);
+        const bool bonesReady = game::hero_pawn::appearance::native::HeroMorphComponent::CaptureBoneScaleState(nativeHero_, boneScales);
+        bool clothingReady = game::hero_pawn::appearance::native::HeroClothingComponent::Capture(nativeHero_, clothing);
+        bool modifiersReady = game::hero_pawn::appearance::native::HeroAttachableAppearanceComponent::Capture(nativeHero_, modifiers);
+        if (morphReady && morph.childhood)
+        {
+            if (!clothingReady) { clothing = {}; clothing.valid = true; clothingReady = true; }
+            if (!modifiersReady) { modifiers = {}; modifiers.valid = true; modifiersReady = true; }
+        }
+        if (!morphReady || !bonesReady || !clothingReady || !modifiersReady)
         {
             if (now >= nextBindDiagnosticAt_)
             {
@@ -699,15 +734,24 @@ namespace fable::multiplayer::replication
         {
             return;
         }
-        if (equipmentReady_ && !equipmentDirty_.load(std::memory_order_acquire))
+        if (equipmentReady_)
         {
-            // Combat idle expires/starts without a carrying mutation. Poll
-            // just the native predicate even when the loadout is unchanged.
-            const bool stance = game::hero_pawn::equipment::native::HeroWeaponComponent::ReadCombatStance(nativeHero_);
+            // Pose, block and flourish mutate without any carrying callback.
+            // Publish these immediately, independently of draw/stow settling.
             const auto* state = CurrentState();
-            if (state != nullptr && state->heroEquipment.combatStance == stance)
+            if (state)
             {
-                nextEquipmentCaptureAt_ = now + EquipmentMutationSettleMilliseconds;
+                auto presentation = state->heroEquipment;
+                if (game::hero_pawn::equipment::native::HeroWeaponComponent::CaptureCombatPresentation(nativeHero_, presentation) &&
+                    !presentation.Equals(state->heroEquipment))
+                {
+                    std::lock_guard<std::mutex> lock(ownerStateMutex_);
+                    if (!channel_->CaptureEquipment(presentation)) return;
+                }
+            }
+            if (!equipmentDirty_.load(std::memory_order_acquire))
+            {
+                nextEquipmentCaptureAt_ = now + 16;
                 return;
             }
         }
@@ -968,6 +1012,16 @@ namespace fable::multiplayer::replication
         }
         const std::string currentMap = hero_->GetCurrentMapName();
         return !currentMap.empty() && currentMap == mapName_;
+    }
+
+    void LocalHeroReplication::BeginCheckpointReload() noexcept
+    {
+        // A rollback restores saved progression. Map travel's owned-state restorer
+        // must not copy post-checkpoint inventory/equipment back over the loaded Hero.
+        { std::lock_guard<std::mutex> lock(ownerStateMutex_); ownedStateRestorer_.Clear(); }
+        transitionActive_ = transitionCompleted_ = destinationBaselineOpened_ = false;
+        departingNativeHero_ = nullptr; departingMapName_.clear(); departingMapId_ = 0;
+        ReleaseHero(); entryPending_ = false;
     }
 
     void LocalHeroReplication::BeginWorldTransition() noexcept

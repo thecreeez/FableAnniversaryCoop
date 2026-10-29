@@ -153,6 +153,12 @@ namespace fable::multiplayer::world
         localHero_ = nullptr;
     }
 
+    void ChestSyncService::ResetForReload() noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        localOpened_.clear(); localDoors_.clear(); remoteOpening_.clear(); inbound_.clear(); outbound_.clear();
+    }
+
     bool __fastcall ChestSyncService::RewardObserved(void* const container, void* const edx)
     {
         (void)edx;

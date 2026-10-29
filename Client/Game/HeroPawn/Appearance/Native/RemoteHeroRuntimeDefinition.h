@@ -20,7 +20,7 @@ namespace fable::game::hero_pawn::appearance::native
         [[nodiscard]] bool Ensure(
             HMODULE gameModule,
             DefinitionLookup definitionLookup,
-            const core::Diagnostics& diagnostics) noexcept;
+            const core::Diagnostics& diagnostics, bool childhood = false) noexcept;
         [[nodiscard]] bool ReplaceReference(void** result) noexcept;
 
         [[nodiscard]] void* Get() const noexcept;

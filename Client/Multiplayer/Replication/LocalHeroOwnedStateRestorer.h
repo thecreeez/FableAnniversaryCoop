@@ -8,6 +8,7 @@
 namespace fable::game
 {
     class EntityService;
+    class Entity;
 }
 
 namespace fable::multiplayer::replication
@@ -30,6 +31,7 @@ namespace fable::multiplayer::replication
             const core::Diagnostics& diagnostics) noexcept;
         [[nodiscard]] LocalHeroRestoreResult Reconcile(
             game::EntityService& entities,
+            game::Entity& hero,
             void* nativeHero,
             const game::hero_pawn::appearance::HeroMorphState& morph,
             const game::hero_pawn::appearance::HeroClothingState& clothing,
@@ -50,5 +52,6 @@ namespace fable::multiplayer::replication
         bool pending_ = false;
         bool definitionsRequested_ = false;
         bool modifiersDegraded_ = false;
+        bool presentationRequested_ = false;
     };
 }

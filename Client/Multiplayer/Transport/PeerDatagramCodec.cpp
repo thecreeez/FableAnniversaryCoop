@@ -61,6 +61,9 @@ namespace fable::multiplayer::transport_codec
             type == PacketType::DemonDoorOpen ||
             type == PacketType::KillExperience ||
             type == PacketType::EnemyTarget ||
+            type == PacketType::WorldClock ||
+            type == PacketType::SleepRequest ||
+            type == PacketType::Destructible || type == PacketType::Checkpoint || type == PacketType::Weather || type == PacketType::Effect ||
             type == PacketType::PlayerActorState ||
             type == PacketType::CombatHit ||
             type == PacketType::ReliableFragment;

@@ -94,6 +94,9 @@ namespace fable::multiplayer::combat
         core::Diagnostics diagnostics_ = {};
         std::uint64_t localActorId_ = 0;
         replication::CombatHitObservationCache nativeObservations_;
+        // Gameplay commits independently of optional native reaction/death
+        // presentation so a deferred cosmetic step cannot repeat damage.
+        replication::CombatHitResultRevisionCache healthRevisions_;
         CombatTerminalTransitionState terminalTransitions_;
     };
 }

@@ -225,6 +225,17 @@ namespace fable::multiplayer::persistence
             guestCollectionApplied_;
     }
 
+    bool SavedEntityMapBaselineService::BeginCheckpointHeroLoad() noexcept
+    {
+        if (role_ != PeerRole::Guest) return true;
+        // The selected checkpoint is a new source save, not another map of the
+        // first loaded save. Re-capture this Hero rather than reusing its old bytes.
+        initialGuestHeroConstructionPending_ = true;
+        guestCollectionApplied_ = guestCollectionPrepared_ = preparedCollectionIncludesGuestHero_ = false;
+        return guestHeroBoundary_.Initialize(GetModuleHandleW(nullptr), diagnostics_) &&
+            localShopBoundary_.Initialize(GetModuleHandleW(nullptr), diagnostics_);
+    }
+
     bool SavedEntityMapBaselineService::CompleteInitialGuestHeroConstruction()
         noexcept
     {

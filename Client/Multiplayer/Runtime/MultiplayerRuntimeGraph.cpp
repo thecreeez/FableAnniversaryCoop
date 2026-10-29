@@ -130,6 +130,20 @@ namespace fable::multiplayer
         w.hostWorldState.Initialize(role, e.entityLifecycle, e.entityIdentities, diagnostics_);
         // Before questState: the executable validator checks the quest
         // save/load prologues, which questState patches on install.
+        if (!w.worldClock.Initialize(role, t.transport, p.localHero, t.remotePlayerChannels, sessionAuthorityEpoch, diagnostics_))
+        {
+            diagnostics_.Event("ClientFailed", "multiplayer-world-clock-native-boundary");
+            MarkStage(InitializationStage::Components);
+            Shutdown();
+            return false;
+        }
+        // The bundle observer validates original quest persistence prologues.
+        // Install it before questState patches those boundaries.
+        if (!w.checkpoints.Initialize(role, contexts_, entities, sessionAuthorityEpoch, diagnostics_))
+        {
+            diagnostics_.Event("ClientFailed", "multiplayer-checkpoint-native-boundary");
+            MarkStage(InitializationStage::Components); Shutdown(); return false;
+        }
         w.questEvents.Initialize(role, actorId, t.transport, diagnostics_);
         w.cutscenes.Install(GetModuleHandleW(nullptr), diagnostics_);
         game::native::InstallQuestMapCameraGuard(GetModuleHandleW(nullptr), diagnostics_);
@@ -190,6 +204,20 @@ namespace fable::multiplayer
             Shutdown();
             return false;
         }
+        a.playerDeath.SetRole(role);
+        if (!w.destructibles.Initialize(role, t.transport, e.entityPresence, e.entityIdentities,
+                p.localHero, t.remotePlayerChannels, diagnostics_))
+        {
+            diagnostics_.Event("ClientFailed", "multiplayer-shared-world-checkpoint-boundary");
+            Shutdown(); return false;
+        }
+        w.worldClock.SetCheckpointScope(&w.checkpoints);
+        w.destructibles.SetCheckpointScope(&w.checkpoints);
+        if (!w.weather.Initialize(role, t.transport, p.localHero, t.remotePlayerChannels,
+            w.checkpoints, sessionAuthorityEpoch, diagnostics_))
+        { diagnostics_.Event("ClientFailed", "multiplayer-weather-native-boundary"); Shutdown(); return false; }
+        if (!w.effects.Initialize(role, contexts_, diagnostics_))
+        { diagnostics_.Event("ClientFailed", "multiplayer-effect-native-boundary"); Shutdown(); return false; }
         t.reliableMessages.Initialize(t.transport, diagnostics_);
         MarkStage(InitializationStage::ReliableDispatcher);
         w.savedEntityConstructionGate.Initialize(role, t.transport, t.reliableMessages, t.remotePlayerChannels, a.playerActions, w.authority, diagnostics_, &w.questState, &w.worldSections, &w.savedEntityMapBaseline);
@@ -266,7 +294,7 @@ namespace fable::multiplayer
         const authority::MapAuthorityLease* lease = contexts_.world.authority.FindMapLease(mapName);
         return lease != nullptr && lease->epoch != 0 && (!lease->localAuthority || contexts_.entities.entityMaterialization.IsLocalRosterReady(mapName, lease->epoch));
     }
-    void MultiplayerRuntimeGraph::DriveReplicatedMovement() { if (enabled_ && contexts_.players.localHero.IsWorldReady()) { contexts_.players.remotePlayers.DriveMovement(); contexts_.entities.entityMovement.Drive(); } }
+    void MultiplayerRuntimeGraph::DriveReplicatedMovement() { if (enabled_ && !contexts_.world.checkpoints.IsBarrierActive() && contexts_.players.localHero.IsWorldReady()) { contexts_.players.remotePlayers.DriveMovement(); contexts_.entities.entityMovement.Drive(); } }
     bool MultiplayerRuntimeGraph::HasActiveRemotePresentation() const { return enabled_ && contexts_.players.remotePlayers.ActiveCount() != 0; }
     bool MultiplayerRuntimeGraph::TransferOwnedEntity(std::uint64_t uid, std::uint16_t mapId, const game::Vector3& position, float facing) { return enabled_ && contexts_.entities.entityPresence.UnregisterLocalPresence(uid) && contexts_.entities.entityLifecycle.SubmitOwnedTransfer(uid, mapId, position, facing); }
 
@@ -289,6 +317,10 @@ namespace fable::multiplayer
         }
         if (HasStage(InitializationStage::Components))
         {
+            w.checkpoints.Shutdown();
+            w.effects.Shutdown();
+            w.weather.Shutdown();
+            w.destructibles.Shutdown();
             a.playerDeath.Shutdown();
             w.villageMembership.Shutdown();
             e.entityLowSimulation.Shutdown();
@@ -308,6 +340,7 @@ namespace fable::multiplayer
             w.savedEntityMapBaseline.Shutdown();
             w.hostWorldState.Shutdown();
             w.worldSections.Shutdown();
+            w.worldClock.Shutdown();
             w.cutsceneSync.Shutdown();
             a.enemyTargets.Shutdown();
             a.combatHits.SetAppliedHitObserver(nullptr, nullptr);

@@ -6,6 +6,10 @@
 
 #include "Game/Cutscene/CutsceneObserver.h"
 #include "Multiplayer/World/ChestSyncService.h"
+#include "Multiplayer/World/WorldClockSyncService.h"
+#include "Multiplayer/World/WeatherSyncService.h"
+#include "Multiplayer/World/DestructibleSyncService.h"
+#include "Multiplayer/Persistence/SessionCheckpointService.h"
 #include "Game/Native/ScriptInterfaceTracer.h"
 #include "Game/Native/HudMessageProbe.h"
 #include "Multiplayer/Combat/EnemyTargetDistributor.h"
@@ -30,6 +34,7 @@
 #include "Multiplayer/Persistence/SavedEntityMapBaselineService.h"
 #include "Multiplayer/Persistence/WorldSectionAuthorityService.h"
 #include "Multiplayer/Presentation/RemotePlayerRegistry.h"
+#include "Multiplayer/Presentation/EffectSyncService.h"
 #include "Multiplayer/Replication/EntityActionReplication.h"
 #include "Multiplayer/Replication/EntityLowSimulationReplication.h"
 #include "Multiplayer/Replication/EntityVitalsReplication.h"
@@ -75,6 +80,11 @@ namespace fable::multiplayer
         game::cutscene::CutsceneObserver cutscenes;
         world::CutsceneSyncService cutsceneSync;
         world::ChestSyncService chestSync;
+        world::WorldClockSyncService worldClock;
+        world::WeatherSyncService weather;
+        presentation::EffectSyncService effects;
+        world::DestructibleSyncService destructibles;
+        persistence::SessionCheckpointService checkpoints;
         game::native::ScriptInterfaceTracer scriptTracer;
         game::native::HudMessageProbe hudMessageProbe;
         persistence::WorldSectionAuthorityService worldSections;

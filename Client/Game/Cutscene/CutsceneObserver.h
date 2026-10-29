@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 namespace fable::game::cutscene
 {
@@ -57,6 +58,8 @@ namespace fable::game::cutscene
         // only one that ends the sequence after the cutscene.
         bool EndScriptedSequence() noexcept;
         bool BeginScriptedSequence() noexcept;
+        bool PopSkip(std::string& name);
+        bool RequestSkip(const char* name, bool broadcast = false) noexcept;
 
     private:
         using StartFn = std::uintptr_t(__cdecl*)(
@@ -67,6 +70,14 @@ namespace fable::game::cutscene
             void* name, void* a2, std::uint32_t a3, std::uint32_t a4,
             std::uint32_t a5, std::uint32_t a6);
         bool ReadInCutscene(bool& value) const noexcept;
+        using InputFn = void(__thiscall*)(void*, void*, void*);
+        static void __fastcall InputObserved(void* self, void*, void* input, void* messages);
+        void SetActiveName(const char* name) noexcept;
+        core::hooking::InlineHook skipInput_;
+        InputFn originalInput_ = nullptr;
+        SRWLOCK skipLock_ = SRWLOCK_INIT;
+        char activeName_[96] = {}, localSkip_[96] = {};
+        bool skipRequested_ = false, broadcastSkip_ = false;
 
         static CutsceneObserver* active_;
         // Set on a thread while Play() drives the retail start, so the gate

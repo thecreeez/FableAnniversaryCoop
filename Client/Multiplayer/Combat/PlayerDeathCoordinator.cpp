@@ -50,9 +50,19 @@ namespace fable::multiplayer::combat
         if (creature == self->localCreature_ && self->combat_ != nullptr &&
             self->combat_->ConsumeNativeResurrectionFlask(creature))
         {
+            self->terminalDead_.store(false, std::memory_order_release);
             self->diagnostics_.Event("MultiplayerResurrectionFlaskConsumedNoPause",
                 "one native flask consumed; native recovery action; no quest-exit/death card or world pause");
             return 0;
+        }
+        if (creature == self->localCreature_)
+        {
+            self->terminalDead_.store(true, std::memory_order_release);
+            if (self->role_ == PeerRole::Guest)
+            {
+                self->diagnostics_.Event("MultiplayerGuestDeathWaiting", "terminal death; guest load/death card suppressed until host checkpoint reload");
+                return 0;
+            }
         }
         return self->originalDeath_(creature);
     }
@@ -213,6 +223,19 @@ namespace fable::multiplayer::combat
         return combat_ != nullptr && hero == localCreature_ && combat_->ApplyOwnedCombatDamage(hero, damage);
     }
 
+    bool PlayerDeathCoordinator::ConsumeFlaskForAcceptance(void* hero) noexcept
+    {
+        return combat_ && hero == localCreature_ && combat_->ConsumeNativeResurrectionFlask(hero);
+    }
+
+    void PlayerDeathCoordinator::ResetForCheckpointLoad() noexcept
+    {
+        terminalDead_.store(false, std::memory_order_release);
+        pending_ = {};
+        std::lock_guard<std::mutex> lock(eventMutex_);
+        events_.clear();
+    }
+
     void PlayerDeathCoordinator::Shutdown() noexcept
     {
         if (!resurrectionTutorialCall_.Shutdown()) return;
@@ -237,6 +260,7 @@ namespace fable::multiplayer::combat
         combatants_ = nullptr;
         diagnostics_ = {};
         initialized_ = false;
+        terminalDead_.store(false, std::memory_order_release);
     }
 
     void PlayerDeathCoordinator::CaptureMutation(

@@ -133,6 +133,8 @@ namespace fable::game::hero_pawn::appearance::hooks
             active_ = nullptr;
         }
         runtimeDefinition_.AbandonForProcessLifetime();
+        childDefinition_.AbandonForProcessLifetime();
+        armedDefinition_ = nullptr;
         originalLookup_ = nullptr;
         originalApply_ = nullptr;
         gameModule_ = nullptr;
@@ -142,14 +144,15 @@ namespace fable::game::hero_pawn::appearance::hooks
         diagnostics_ = {};
     }
 
-    RemoteHeroDefinitionHook::ArmToken RemoteHeroDefinitionHook::Arm() noexcept
+    RemoteHeroDefinitionHook::ArmToken RemoteHeroDefinitionHook::Arm(bool childhood) noexcept
     {
         if (!IsInstalled() ||
-            !runtimeDefinition_.Ensure(
-                gameModule_, originalLookup_, diagnostics_))
+            !(childhood ? childDefinition_ : runtimeDefinition_).Ensure(
+                gameModule_, originalLookup_, diagnostics_, childhood))
         {
             return 0;
         }
+        armedDefinition_ = childhood ? &childDefinition_ : &runtimeDefinition_;
         const ArmToken token = armToken_.fetch_add(
             1, std::memory_order_acq_rel) + 1;
         substitutions_.store(0, std::memory_order_relaxed);
@@ -232,11 +235,10 @@ namespace fable::game::hero_pawn::appearance::hooks
         }
         const bool found = hook->originalLookup_(
             definitionManager, definitionIndex, result);
-        if (found &&
+        if (found && hook->IsActiveOnCurrentThread() && hook->armedDefinition_ &&
             definitionIndex ==
-                hook->runtimeDefinition_.RetailBaseIndex() &&
-            hook->IsActiveOnCurrentThread() &&
-            hook->runtimeDefinition_.ReplaceReference(result))
+                hook->armedDefinition_->RetailBaseIndex() &&
+            hook->armedDefinition_->ReplaceReference(result))
         {
             hook->substitutions_.fetch_add(1, std::memory_order_relaxed);
         }
@@ -254,7 +256,7 @@ namespace fable::game::hero_pawn::appearance::hooks
             return;
         }
         hook->originalApply_(thing, definition);
-        if (definition == hook->runtimeDefinition_.Get() &&
+        if ((definition == hook->runtimeDefinition_.Get() || definition == hook->childDefinition_.Get()) &&
             hook->IsActiveOnCurrentThread())
         {
             (void)hook->ProvisionHeroComponents(thing);

@@ -45,6 +45,8 @@ namespace fable::launcher::multiplayer
         // hits the host, then (moved to the guest) the guest, whose own game
         // loses health, then the host again after the players swap.
         const bool enemies = played &&
+            peers.WaitEvent(guest, "CutsceneSkipLocal") &&
+            peers.WaitEvent(host, "CutsceneSkipApplied") &&
             peers.WaitEvent(host, "CutsceneAcceptanceCutsceneOver") &&
             peers.WaitEvent(host, "EnemyTestCorpseSwarmSelected") &&
             peers.WaitEvent(host, "EnemyTestHostNearWasp") &&

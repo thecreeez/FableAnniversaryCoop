@@ -123,6 +123,7 @@ namespace fable::automation::multiplayer::features
         std::uint16_t lastHostMap_ = 0;
         std::uint64_t promptSeenAt_ = 0;
         bool sawCutscene_ = false;
+        bool skipRequestedForTest_ = false;
         std::uint64_t waspUid_ = 0;
         std::uint64_t nextWaspTeleportAt_ = 0;
         // Guest: where the host was while fighting away from the guest.

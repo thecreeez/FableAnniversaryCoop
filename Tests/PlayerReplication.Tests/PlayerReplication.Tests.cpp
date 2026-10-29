@@ -3,6 +3,7 @@
 #include "Multiplayer/Protocol/AuthorityMessage.h"
 #include "Multiplayer/Protocol/PlayerActorStateCodec.h"
 #include "Multiplayer/Protocol/EntityMovementMessage.h"
+#include "Multiplayer/Protocol/EntityActionMessage.h"
 #include "Multiplayer/Protocol/EntityLifecycleMessage.h"
 #include "Multiplayer/Protocol/EntityVitalsMessageCodec.h"
 #include "Multiplayer/Protocol/PacketEnvelope.h"
@@ -194,6 +195,9 @@ namespace
 
         message.heroEquipment.valid = true;
         message.heroEquipment.combatStance = true;
+        message.heroEquipment.flourishReady = true;
+        message.heroEquipment.combatStrafing = true;
+        message.heroEquipment.blocking = true;
         message.heroEquipment.meleeDefinitionIndex = 3001;
         message.heroEquipment.meleeAttachmentSlot = 2;
         message.heroEquipment.activeFamily =
@@ -329,6 +333,22 @@ namespace
         return EncodePlayerActorStateMessage(
                    source, bytes.data(), bytes.size(), encodedSize) &&
             DecodePlayerActorStateMessage(bytes.data(), encodedSize, decoded);
+    }
+
+    void TestHeroLifeStageCodec()
+    {
+        constexpr const char* test = "hero life stage codec";
+        auto source = Construct();
+        PlayerActorStateMessage decoded;
+        source.heroMorph.child = false; source.heroMorph.childhood = true; source.heroMorph.age = 0;
+        CHECK(test, RoundTripActor(source, decoded));
+        CHECK(test, decoded.heroMorph.childhood && !decoded.heroMorph.child && decoded.heroMorph.age == 0);
+        source.heroMorph.childhood = false; source.heroMorph.child = true; source.heroMorph.age = 0.1f;
+        CHECK(test, RoundTripActor(source, decoded));
+        CHECK(test, !decoded.heroMorph.childhood && decoded.heroMorph.child && decoded.heroMorph.age == 0.1f);
+        source.heroMorph.child = false; source.heroMorph.age = 0.85f;
+        CHECK(test, RoundTripActor(source, decoded));
+        CHECK(test, !decoded.heroMorph.child && !decoded.heroMorph.childhood && decoded.heroMorph.age == 0.85f);
     }
 
     bool RoundTripMovement(
@@ -2063,7 +2083,7 @@ namespace
     void TestRapidActionsKeepOnlyLatestCurrentPresentation()
     {
         constexpr const char* test =
-            "rapid actions keep latest current presentation";
+            "owner attack bursts play every received frame immediately";
         constexpr std::uint64_t actorId = 3004;
         constexpr std::uint64_t connectionNonce = 444;
 
@@ -2102,12 +2122,21 @@ namespace
 
         for (std::uint64_t actionId = 1; actionId <= 128; ++actionId)
         {
-            CHECK(test, actions.HandleReliableMessage(
-                MakePlayerActionTransportMessage(
-                    actorId, connectionNonce, actionId)));
+            auto packet = MakePlayerActionTransportMessage(actorId, connectionNonce, actionId);
+            PlayerActionMessage attack;
+            CHECK(test, fable::multiplayer::protocol::DecodePlayerActionMessage(
+                packet.payload.data(), packet.payloadSize, attack));
+            attack.hasNativeAnimation = true;
+            attack.nativeAnimation.animationId = attack.resolvedAnimationId;
+            // Body playback must not wait for the target to materialize.
+            attack.targetThingUid = 0xFFFFFFFF;
+            CHECK(test, fable::multiplayer::protocol::EncodePlayerActionMessage(
+                attack, packet.payload.data(), packet.payload.size(), packet.payloadSize));
+            CHECK(test, actions.HandleReliableMessage(packet));
+            CHECK(test, PerformedAbilityCountForTest() == actionId);
         }
         CHECK(test, actions.ReplayRemotePending());
-        CHECK(test, PerformedAbilityCountForTest() == 1);
+        CHECK(test, PerformedAbilityCountForTest() == 128);
         CHECK(test,
             LastPerformedAnimationIdForTest() == 128);
 
@@ -2131,7 +2160,7 @@ namespace
             delayed.payloadSize));
         CHECK(test, actions.HandleReliableMessage(delayed));
         CHECK(test, actions.ReplayRemotePending());
-        CHECK(test, PerformedAbilityCountForTest() == 2);
+        CHECK(test, PerformedAbilityCountForTest() == 129);
         CHECK(test,
             LastPerformedAnimationIdForTest() == 500);
 
@@ -2151,7 +2180,7 @@ namespace
             duplicate.payloadSize));
         CHECK(test, actions.HandleReliableMessage(duplicate));
         CHECK(test, actions.ReplayRemotePending());
-        CHECK(test, PerformedAbilityCountForTest() == 2);
+        CHECK(test, PerformedAbilityCountForTest() == 129);
 
         TransportMessage current = MakePlayerActionTransportMessage(
             actorId, connectionNonce, 501);
@@ -2168,7 +2197,7 @@ namespace
             current.payloadSize));
         CHECK(test, actions.HandleReliableMessage(current));
         CHECK(test, actions.ReplayRemotePending());
-        CHECK(test, PerformedAbilityCountForTest() == 3);
+        CHECK(test, PerformedAbilityCountForTest() == 130);
         CHECK(test,
             LastPerformedAnimationIdForTest() == 501);
 
@@ -2190,7 +2219,7 @@ namespace
             future.payloadSize));
         CHECK(test, actions.HandleReliableMessage(future));
         CHECK(test, actions.ReplayRemotePending());
-        CHECK(test, PerformedAbilityCountForTest() == 4);
+        CHECK(test, PerformedAbilityCountForTest() == 131);
         CHECK(test,
             LastPerformedAnimationIdForTest() == 502);
 
@@ -3282,6 +3311,24 @@ namespace
     void TestEntityMovementIngressKeepsLatestPerSubject()
     {
         constexpr const char* test = "entity movement latest per subject";
+        using namespace fable::multiplayer::protocol;
+        // A player attacking an NPC must not become the NPC attack publisher.
+        CHECK(test, UsesSimulationActionAuthority(EntityActionKind::Combat, "CCreatureAction_InterruptableNearAttack"));
+        CHECK(test, UsesSimulationActionAuthority(EntityActionKind::Combat, "CCreatureAction_InterruptableMidAttack"));
+        CHECK(test, !UsesSimulationActionAuthority(EntityActionKind::Combat, "PlayerAttackEngagement"));
+        CHECK(test, !UsesSimulationActionAuthority(EntityActionKind::QuestOrCutscene, "QuestMove"));
+        for (std::uint8_t flags = 0; flags < 8; ++flags)
+        {
+            auto source = MakeEntityMovement(9000, 1, 1.0f);
+            source.combatFlags = flags;
+            const auto packet = EntityMovementTransportMessage(source);
+            EntityMovementMessage decoded;
+            CHECK(test, DecodeEntityMovementMessage(packet.payload.data(), packet.payloadSize, decoded));
+            CHECK(test, decoded.combatFlags == flags);
+            auto malformed = packet;
+            malformed.payload[65] = 8; // combat flags, formerly the first reserved byte
+            CHECK(test, !DecodeEntityMovementMessage(malformed.payload.data(), malformed.payloadSize, decoded));
+        }
         fable::multiplayer::MovementTransport transport;
         CHECK(test, transport.AcceptEntity(EntityMovementTransportMessage(
             MakeEntityMovement(9001, 1, 1.0f))));
@@ -4496,6 +4543,32 @@ namespace
         CHECK(test, decoded.requiredWeapons.meleeDefinitionIndex == -1);
         CHECK(test, decoded.resolvedActionType == attack.resolvedActionType);
 
+        attack.hasNativeAnimation = true;
+        attack.nativeAnimation.animationId = attack.resolvedAnimationId;
+        attack.nativeAnimation.channel = 2;
+        attack.nativeAnimation.immediate = 1;
+        attack.nativeAnimation.option = 3;
+        attack.nativeAnimation.playbackRate = 1.75f;
+        attack.nativeAnimation.blendIn = 0.25f;
+        attack.nativeAnimation.blendOut = 0.5f;
+        attack.nativeAnimation.startTime = 0.125f;
+        attack.nativeAnimation.endTime = -1.0f;
+        attack.nativeAnimation.flags = 0x40;
+        attack.nativeAnimation.variant = 3;
+        attack.nativeAnimation.priority = 120;
+        attack.nativeBlendFrames = 2;
+        attack.nativeAnimationOptions = 8;
+        CHECK(test, EncodePlayerActionMessage(attack, bytes.data(), bytes.size(), encodedSize));
+        CHECK(test, DecodePlayerActionMessage(bytes.data(), encodedSize, decoded));
+        CHECK(test, decoded.hasNativeAnimation);
+        CHECK(test, std::memcmp(&decoded.nativeAnimation, &attack.nativeAnimation, sizeof(attack.nativeAnimation)) == 0);
+        CHECK(test, decoded.nativeBlendFrames == 2 && decoded.nativeAnimationOptions == 8);
+        attack.nativeAnimation.animationId++;
+        CHECK(test, !EncodePlayerActionMessage(attack, bytes.data(), bytes.size(), encodedSize));
+        attack.nativeAnimation.animationId--;
+        attack.nativeAnimation.playbackRate = std::numeric_limits<float>::quiet_NaN();
+        CHECK(test, !EncodePlayerActionMessage(attack, bytes.data(), bytes.size(), encodedSize));
+        attack.hasNativeAnimation = false;
         attack.resolvedActionType.clear();
         CHECK(test, !EncodePlayerActionMessage(
             attack, bytes.data(), bytes.size(), encodedSize));
@@ -4899,8 +4972,16 @@ namespace
     }
 }
 
+int RunWorldClockTests();
+int RunWeatherTests();
+int RunEffectTests();
+
 int main()
 {
+    if (RunWorldClockTests() != 0) return 1;
+    if (RunWeatherTests() != 0) return 1;
+    if (RunEffectTests() != 0) return 1;
+    TestHeroLifeStageCodec();
     // Prepare and readiness acknowledgements retain the exact entity fence.
     // Zero epochs must never be accepted as a ready binding.
     {

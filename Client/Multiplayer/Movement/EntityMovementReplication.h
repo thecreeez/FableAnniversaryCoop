@@ -69,6 +69,7 @@ namespace fable::multiplayer::movement
             std::uint64_t observerReadinessRevision,
             bool cinematicActive);
         void Drive();
+        void ResetForReload() noexcept;
         void Shutdown() noexcept;
 
     private:

@@ -91,9 +91,9 @@ namespace fable::multiplayer::world
         };
 
         static constexpr float GatherRadius = 20.0f;
-        // Gathering must hold this long, on a settled local world, before the
-        // cutscene is released (a fresh arrival reports a stale map).
-        static constexpr std::uint64_t GatherStableMilliseconds = 1'500;
+        // Delay only the prompt for genuinely missing players, never a ready
+        // party's cutscene. Short map/position publication gaps stay invisible.
+        static constexpr std::uint64_t MissingPromptDelayMilliseconds = 350;
         // A peer told to play first lets its own quest script start the
         // cutscene; only after this does it force a replay.
         static constexpr std::uint64_t OwnScriptGraceMilliseconds = 5'000;
@@ -130,7 +130,7 @@ namespace fable::multiplayer::world
         bool FindPreviousMapRoute(std::uint16_t mapId, game::Vector3& position, float& facing) const;
         void ProcessRetreat(const PlayerState* local, std::uint64_t now);
         void* HeroThing() const;
-        bool SendPlay(const std::string& name, std::uint16_t mapId);
+        bool SendPlay(const std::string& name, std::uint16_t mapId, bool skip = false);
         void ReplayAsync(const std::string& name);
         static DWORD WINAPI ReplayThread(void* parameter);
 
@@ -163,8 +163,6 @@ namespace fable::multiplayer::world
         std::uint32_t retreatAttempts_ = 0;
         std::uint64_t nextRetreatAt_ = 0;
         // The initiator already played its cutscene when the host echoes it.
-        std::string lastReleasedName_;
-        std::uint64_t lastReleasedAt_ = 0;
         static constexpr std::uint64_t EchoWindowMilliseconds = 30'000;
         core::Diagnostics diagnostics_ = {};
         PeerRole role_ = PeerRole::Guest;
@@ -188,10 +186,16 @@ namespace fable::multiplayer::world
         {
             std::string name;
             std::uint16_t mapId = 0;
+            bool skip = false;
         };
         std::deque<PeerPlay> peerPlays_;
+        std::deque<PeerPlay> peerSkips_;
         std::deque<OutboundPlay> outboundPlays_;
-        std::uint64_t gatheredSince_ = 0;
+        // Gate runs on the script thread; drain its immediate starts on the
+        // game thread under holdMutex_ before touching the transport queue.
+        std::deque<OutboundPlay> immediatePlays_;
+        std::deque<PeerPlay> recentReleases_;
+        std::uint64_t missingSince_ = 0;
         std::atomic_bool enabled_{false};
     };
 }

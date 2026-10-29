@@ -42,11 +42,9 @@ namespace
     }
 
     bool IsMapScopedAction(
-        fable::multiplayer::protocol::EntityActionKind kind) noexcept
+        fable::multiplayer::protocol::EntityActionKind kind, const std::string& semanticName) noexcept
     {
-        using fable::multiplayer::protocol::EntityActionKind;
-        return kind == EntityActionKind::Native ||
-            kind == EntityActionKind::Movement;
+        return fable::multiplayer::protocol::UsesSimulationActionAuthority(kind, semanticName);
     }
 
     unsigned int ActionPriority(
@@ -948,11 +946,13 @@ namespace fable::multiplayer::replication
         const bool borrowExistingLease = !combatEngagement &&
             existingLease != nullptr &&
             existingLease->actorId == sourceActorId &&
+            !(existingLease->kind == protocol::ActionLeaseKind::PrimaryAttacker &&
+              IsMapScopedAction(intent.kind, intent.semanticName)) &&
             existingLease->mapEpoch == intent.mapEpoch &&
             existingLease->mapName == intent.mapName &&
             LeasePriority(existingLease->kind) >= requiredPriority;
-        const bool mapScoped = IsMapScopedAction(intent.kind) &&
-            existingLease == nullptr &&
+        const bool mapScoped = IsMapScopedAction(intent.kind, intent.semanticName) &&
+            (existingLease == nullptr || existingLease->kind == protocol::ActionLeaseKind::PrimaryAttacker) &&
             authority_->IsEntityPublisher(
                 {intent.entityUid, intent.entityGeneration},
                 intent.mapName, sourceActorId, intent.mapEpoch);
@@ -1119,7 +1119,7 @@ namespace fable::multiplayer::replication
                     authority_->FindActionLease(key);
                 const bool mapScoped = active != activeActions_.end() &&
                     !active->second.ownsLease &&
-                    IsMapScopedAction(active->second.kind) &&
+                    IsMapScopedAction(active->second.kind, active->second.semanticName) &&
                     active->second.actionEpoch == active->second.mapEpoch &&
                     authority_->IsEntityPublisher(
                         {active->second.entityUid, active->second.entityGeneration},
@@ -1185,7 +1185,7 @@ namespace fable::multiplayer::replication
                 authority_->FindActionLease(key);
             const bool mapScoped = active != activeActions_.end() &&
                 !active->second.ownsLease &&
-                IsMapScopedAction(active->second.kind) &&
+                IsMapScopedAction(active->second.kind, active->second.semanticName) &&
                 active->second.actionEpoch == active->second.mapEpoch &&
                 authority_->IsEntityPublisher(
                     {active->second.entityUid, active->second.entityGeneration},
@@ -1245,7 +1245,7 @@ namespace fable::multiplayer::replication
             authority_->FindActionLease(key);
         if (message.phase == protocol::EntityActionPhase::Begin)
         {
-            const bool mapScoped = IsMapScopedAction(message.kind) &&
+            const bool mapScoped = IsMapScopedAction(message.kind, message.semanticName) &&
                 message.actionEpoch == message.mapEpoch &&
                 authority_->IsEntityPublisher(
                     {message.entityUid, message.entityGeneration},
@@ -1351,7 +1351,7 @@ namespace fable::multiplayer::replication
             active.finished = alreadyFinished;
             active.combatEngagement = combatEngagement;
             active.ownsLease = !mapScoped &&
-                !IsMapScopedAction(message.kind) &&
+                !IsMapScopedAction(message.kind, message.semanticName) &&
                 !(lease != nullptr &&
                     lease->kind ==
                         protocol::ActionLeaseKind::PrimaryAttacker &&
@@ -1417,7 +1417,7 @@ namespace fable::multiplayer::replication
             const auto active = activeActions_.find(message.actionId);
             const bool mapScoped = active != activeActions_.end() &&
                 !active->second.ownsLease &&
-                IsMapScopedAction(active->second.kind) &&
+                IsMapScopedAction(active->second.kind, active->second.semanticName) &&
                 active->second.actionEpoch == active->second.mapEpoch &&
                 authority_->IsEntityPublisher(
                     {active->second.entityUid, active->second.entityGeneration},
@@ -1611,6 +1611,7 @@ namespace fable::multiplayer::replication
             action.semanticName != "CCreatureAction_FodderIdle" &&
             action.semanticName != "CCreatureAction_UseObject" &&
             action.semanticName != "CCreatureAction_InterruptableMidAttack" &&
+            action.semanticName != "CCreatureAction_InterruptableNearAttack" &&
             action.semanticName.rfind("CCombatAction_", 0) != 0)
         {
             const entities::LiveEntityRecord* const live = presence_->LiveEntities().Find(action.entityUid);
@@ -1651,7 +1652,8 @@ namespace fable::multiplayer::replication
         // its combat decision and submitted InterruptableMidAttack itself.
         if (action.nativeAbility || action.ownerActorId == localActorId_ ||
             action.nativeReplayed || action.nativeReplayFailed ||
-            action.semanticName != "CCreatureAction_InterruptableMidAttack")
+            (action.semanticName != "CCreatureAction_InterruptableMidAttack" &&
+             action.semanticName != "CCreatureAction_InterruptableNearAttack"))
         {
             return true;
         }
@@ -1710,8 +1712,14 @@ namespace fable::multiplayer::replication
 
         ++action.nativeReplayAttempts;
         action.nextNativeReplayAt = now + 100;
-        if (!combat_->SubmitReplicatedImmediateAttack(
-                sourceLive->thing, targetCreature))
+        // Both retail variants share the combat-action base. Keep a native
+        // mode/action alive and select the owner's exact short/medium clip.
+        const bool selectionArmed = animation_ && action.animationId &&
+            animation_->BeginReplicatedActionSelection(sourceLive->thing,
+                "CCreatureAction_InterruptableMidAttack", action.animationId);
+        const bool submitted = combat_->SubmitReplicatedImmediateAttack(sourceLive->thing, targetCreature);
+        if (selectionArmed) animation_->EndReplicatedActionSelection();
+        if (!submitted)
         {
             if (action.nativeReplayAttempts >= 30)
             {
@@ -2008,7 +2016,7 @@ namespace fable::multiplayer::replication
             };
             const authority::ActionAuthorityLease* const lease =
                 authority_->FindActionLease(key);
-            const bool mapScoped = IsMapScopedAction(action.kind) &&
+            const bool mapScoped = IsMapScopedAction(action.kind, action.semanticName) &&
                 action.actionEpoch == action.mapEpoch &&
                 authority_->IsEntityPublisher(
                     {action.entityUid, action.entityGeneration},

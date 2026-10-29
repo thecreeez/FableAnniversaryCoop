@@ -6,6 +6,7 @@
 #include "Game/Creature/Look/CreatureLookService.h"
 #include "Game/Creature/Look/Native/CreatureLookFunctions.h"
 #include "Game/Entity/Native/ThingComponentAccess.h"
+#include "Game/HeroPawn/Equipment/Native/HeroWeaponComponent.h"
 #include "Multiplayer/Authority/AuthorityReplication.h"
 #include "Multiplayer/Entities/EntityLifecycleReplication.h"
 #include "Multiplayer/Entities/EntityNetworkIdentityRegistry.h"
@@ -461,6 +462,10 @@ namespace fable::multiplayer::movement
             current.simulationEpoch = authority_->EntitySimulationEpoch({world->thingUid, world->generation}, localMap, mapEpoch);
             current.mapName = localMap;
             current.position = capture.position;
+            game::hero_pawn::equipment::HeroEquipmentState combatState;
+            if (game::hero_pawn::equipment::native::HeroWeaponComponent::CaptureCombatPresentation(live->thing, combatState))
+                current.combatFlags = (combatState.combatStance ? 1 : 0) |
+                    (combatState.combatStrafing ? 2 : 0) | (combatState.blocking ? 4 : 0);
             current.facing = NormalizeFacing(capture.facing);
             // A teleport or an interrupted capture stream has no meaningful
             // instantaneous velocity; do not extrapolate that jump on peers.
@@ -526,6 +531,7 @@ namespace fable::multiplayer::movement
             // otherwise a replica can retain its extrapolated offset forever.
             const bool heartbeat = now - state.lastPublishedAt >= 500;
             const bool due = !state.hasPublished || stopped || heartbeat ||
+                state.current.combatFlags != state.published.combatFlags ||
                 (now - state.lastPublishedAt >=
                     PublishIntervalMilliseconds &&
                     (state.current.moving || rotated || translated)) || readinessReplay;
@@ -923,6 +929,10 @@ namespace fable::multiplayer::movement
                     continue;
                 }
                 playbacks_.emplace(entityUid, std::move(created));
+                if (!game::ScriptControl::HasNativeControl(live->thing))
+                    game::hero_pawn::equipment::native::HeroWeaponComponent::SetRemoteCombatStance(
+                        live->thing, (message.combatFlags & 1) != 0, false,
+                        (message.combatFlags & 2) != 0, (message.combatFlags & 4) != 0);
                 if (game::ScriptControl::HasNativeControl(live->thing))
                 {
                     char detail[192] = {};
@@ -936,6 +946,10 @@ namespace fable::multiplayer::movement
                 continue;
             }
             Playback& active = *playback->second;
+            if (!game::ScriptControl::HasNativeControl(live->thing))
+                game::hero_pawn::equipment::native::HeroWeaponComponent::SetRemoteCombatStance(
+                    live->thing, (message.combatFlags & 1) != 0, false,
+                    (message.combatFlags & 2) != 0, (message.combatFlags & 4) != 0);
             if (IsNewerSequence(message.sequence, active.sequence))
             {
                 active.movement.Update(ToSample(current), localMap);
@@ -956,6 +970,7 @@ namespace fable::multiplayer::movement
         {
             look_->StopRoutingNative(playback->second->nativeThing);
         }
+        game::hero_pawn::equipment::native::HeroWeaponComponent::ClearRemoteCombatStance(playback->second->nativeThing);
         playback->second->movement.Detach();
         playbacks_.erase(playback);
         acceptedMovingEntities_.erase(entityUid);
@@ -1005,6 +1020,20 @@ namespace fable::multiplayer::movement
             look_->DriveReplicatedNativeMovement(
                 entry.second->nativeThing);
         }
+    }
+
+    void EntityMovementReplication::ResetForReload() noexcept
+    {
+        // Routing retains raw native physics pointers. Unbind them before
+        // CWorld can destroy/reuse the source world, including same-map loads.
+        while (!playbacks_.empty()) RetirePlayback(playbacks_.begin()->first);
+        { std::lock_guard<std::mutex> lock(captureMutex_); pendingCaptures_.clear(); }
+        localStates_.clear(); currentSamples_.clear(); deferredInbound_.clear();
+        publishedMovingEntities_.clear(); acceptedMovingEntities_.clear();
+        pendingReadinessReplays_.clear(); capturedInWindow_.clear();
+        ownedMap_.clear(); ownedMapEpoch_ = 0;
+        knownPeerRevision_ = knownObserverReadinessRevision_ = 0;
+        diagnostics_.Event("MultiplayerEntityMovementResetForReload", "native routes and source-world movement samples retired before checkpoint load");
     }
 
     void EntityMovementReplication::Shutdown() noexcept

@@ -40,7 +40,7 @@ namespace fable::game::hero_pawn::appearance
         {
             return false;
         }
-        if (appearanceReady &&
+        if (appearanceReady && !morph.childhood &&
             !native::HeroMorphComponent::ApplyValues(nativeHero_, morph))
         {
             return false;
@@ -104,6 +104,13 @@ namespace fable::game::hero_pawn::appearance
         }
         if (!appearanceReady)
         {
+            return RemoteHeroAppearanceResult::Ready;
+        }
+        if (morph.childhood)
+        {
+            // The child's stock mesh/outfit belongs to its private child
+            // definition. Adult morph/clothing rebuilds replace that mesh.
+            appliedMorph_ = morph;
             return RemoteHeroAppearanceResult::Ready;
         }
         if (!appliedClothing_.Equals(clothing))

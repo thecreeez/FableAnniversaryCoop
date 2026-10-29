@@ -531,6 +531,12 @@ namespace fable::automation::multiplayer::features
         {
             const bool inCutscene = contexts.world.cutscenes.IsInCutscene();
             if (inCutscene) sawCutscene_ = true;
+            if (!host_ && inCutscene && !skipRequestedForTest_ && now - phaseStartedAt_ > 6000 &&
+                contexts.world.cutscenes.RequestSkip("CS_WASPBOSS_INTRO", true))
+            {
+                skipRequestedForTest_ = true;
+                diagnostics_.Event("CutsceneAcceptanceGuestSkipRequested", "native input event39 requested");
+            }
             if (!sawCutscene_ || inCutscene) return false;
             if (now - phaseStartedAt_ < SettleMilliseconds) return false;
             diagnostics_.Event("CutsceneAcceptanceCutsceneOver", host_ ? "role=host" : "role=guest");

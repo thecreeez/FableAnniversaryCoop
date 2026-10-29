@@ -1,4 +1,5 @@
 #include "RemotePlayerRegistry.h"
+#include "Multiplayer/Combat/PlayerCombatantDirectory.h"
 
 #include "Game/Entity/EntityService.h"
 #include "Game/Creature/Animation/CreatureAnimationService.h"
@@ -337,6 +338,21 @@ namespace fable::multiplayer::presentation
                 resolvedAnimationId,
                 expressionDurationTicks,
                 expressionTriggerTicks);
+    }
+
+    bool RemotePlayerRegistry::PerformOwnerAttack(const protocol::PlayerActionMessage& message)
+    {
+        if (!animation_) return false;
+        // The native attack action owns the combat mode and its lifetime.
+        // Submitting a bare animation leaves locomotion free to replace it.
+        animation_->SetOwnerAttackRequest(&message.nativeAnimation,
+            message.nativeBlendFrames, message.nativeAnimationOptions);
+        const bool accepted = PerformAbility(message.ownerActorId, message.weaponFamily,
+            message.requiredWeapons, message.requiredMeleeAttachmentSlot,
+            message.requiredRangedAttachmentSlot, message.abilityId, message.charge,
+            nullptr, "CCreatureAction_InterruptableMidAttackAutoTurn", message.resolvedAnimationId);
+        animation_->SetOwnerAttackRequest(nullptr, 0, 0);
+        return accepted;
     }
 
     bool RemotePlayerRegistry::PerformMotion(

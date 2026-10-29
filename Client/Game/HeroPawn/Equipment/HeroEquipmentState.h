@@ -48,6 +48,9 @@ namespace fable::game::hero_pawn::equipment
     {
         bool valid = false;
         bool combatStance = false;
+        bool flourishReady = false;
+        bool combatStrafing = false;
+        bool blocking = false;
         std::int32_t meleeDefinitionIndex = -1;
         std::int32_t rangedDefinitionIndex = -1;
         std::uint32_t meleeAttachmentSlot = 0;
@@ -96,8 +99,15 @@ namespace fable::game::hero_pawn::equipment
         [[nodiscard]] bool Equals(
             const HeroEquipmentState& other) const noexcept
         {
-            return valid == other.valid && combatStance == other.combatStance &&
-                meleeDefinitionIndex == other.meleeDefinitionIndex &&
+            return combatStance == other.combatStance &&
+                flourishReady == other.flourishReady &&
+                combatStrafing == other.combatStrafing && blocking == other.blocking && SameCarryState(other);
+        }
+
+        [[nodiscard]] bool SameCarryState(
+            const HeroEquipmentState& other) const noexcept
+        {
+            return valid == other.valid && meleeDefinitionIndex == other.meleeDefinitionIndex &&
                 rangedDefinitionIndex == other.rangedDefinitionIndex &&
                 meleeAttachmentSlot == other.meleeAttachmentSlot &&
                 rangedAttachmentSlot == other.rangedAttachmentSlot &&

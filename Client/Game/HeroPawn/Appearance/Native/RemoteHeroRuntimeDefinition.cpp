@@ -122,7 +122,7 @@ namespace fable::game::hero_pawn::appearance::native
     bool RemoteHeroRuntimeDefinition::Ensure(
         HMODULE gameModule,
         DefinitionLookup definitionLookup,
-        const core::Diagnostics& diagnostics) noexcept
+        const core::Diagnostics& diagnostics, bool childhood) noexcept
     {
         if (definition_ != nullptr)
         {
@@ -135,6 +135,7 @@ namespace fable::game::hero_pawn::appearance::native
 
         const auto base = reinterpret_cast<std::uintptr_t>(gameModule);
         void* hero = nullptr;
+        void* child = nullptr;
         void* rival = nullptr;
         void* clone = nullptr;
         void* heroVtable = nullptr;
@@ -191,6 +192,14 @@ namespace fable::game::hero_pawn::appearance::native
             {
                 __leave;
             }
+            if (childhood)
+            {
+                CharString childName;
+                constructString(&childName, "CREATURE_HERO_CHILD", -1);
+                const auto childIndex = resolveIndex(definitionManager, &childName);
+                destroyString(&childName);
+                if (!childIndex || !definitionLookup(definitionManager, childIndex, &child) || !child) __leave;
+            }
 
             void** const expectedVtable = reinterpret_cast<void**>(
                 base + game::native::rva::ThingCreatureDefinitionVtable);
@@ -198,7 +207,7 @@ namespace fable::game::hero_pawn::appearance::native
             rivalVtable = *reinterpret_cast<void**>(rival);
             failureStage = "definition-type";
             if (heroVtable != expectedVtable ||
-                rivalVtable != expectedVtable)
+                rivalVtable != expectedVtable || (child && *reinterpret_cast<void**>(child) != expectedVtable))
             {
                 __leave;
             }
@@ -248,7 +257,7 @@ namespace fable::game::hero_pawn::appearance::native
                 CharString value;
                 constructString(&value, name, -1);
                 const SubDefinitionInfo* const source =
-                    getHeroSubDefinition(hero, &value);
+                    getHeroSubDefinition(child && std::strcmp(name, "CHeroMorphDef") && std::strcmp(name, "CCarryingDef") ? child : hero, &value);
                 if (source != nullptr)
                 {
                     sourceSubDefinitionIndex = source->definitionIndex;
@@ -290,7 +299,7 @@ namespace fable::game::hero_pawn::appearance::native
             failureStage = "definition-presentation-fields";
             auto* const cloneBytes = static_cast<std::uint8_t*>(clone);
             const auto* const heroBytes =
-                static_cast<const std::uint8_t*>(hero);
+                static_cast<const std::uint8_t*>(child ? child : hero);
             std::memcpy(
                 cloneBytes + kMeshDimensionsOffset,
                 heroBytes + kMeshDimensionsOffset,
@@ -315,6 +324,7 @@ namespace fable::game::hero_pawn::appearance::native
         }
 
         (void)ReleaseReference(hero);
+        (void)ReleaseReference(child);
         (void)ReleaseReference(rival);
         if (clone != nullptr)
         {

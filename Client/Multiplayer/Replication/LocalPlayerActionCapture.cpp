@@ -1,5 +1,6 @@
 #include "Game/Creature/Actions/Native/CreatureMotionActionFunctions.h"
 #include "LocalPlayerActionCapture.h"
+#include "Game/Creature/Animation/Hooks/CreatureActionAnimationSelectionHook.h"
 
 #include "PlayerActionSemantics.h"
 #include "Game/Creature/Actions/Hooks/CreatureActionLifecycleObserver.h"
@@ -693,6 +694,35 @@ namespace fable::multiplayer::replication
 
     bool LocalPlayerActionCapture::PairAcceptedLocalActions()
     {
+        using AnimationCapture = game::creature::animation::CreatureActionAnimationSelectionHook;
+        AnimationCapture::WatchLocalHero(localHero_->NativeHero());
+        AnimationCapture::OwnerAttackFrame frame;
+        while (AnimationCapture::PopOwnerAttack(frame))
+        {
+            if (frame.creature != localHero_->NativeHero()) continue;
+            const auto* current = localHero_->CurrentState();
+            if (!current || current->heroEquipment.activeFamily == game::creature::equipment::CreatureWeaponFamily::Ranged) continue;
+            game::creature::actions::CreatureActionLifecycleEvent action;
+            action.creature = frame.creature; action.action = frame.action; action.accepted = true;
+            action.observedAt = frame.observedAt; action.animationId = static_cast<unsigned int>(frame.request.animationId);
+            strcpy_s(action.actionType, frame.actionType);
+            game::creature::combat::CreatureAbilityEvent ability;
+            ability.sourceCreature = frame.creature; ability.abilityId = 1101; ability.attackCommand = true;
+            ability.observedAt = frame.observedAt;
+            const auto count = pendingMessages_.size();
+            if (!CaptureLocal(ability, &action)) return false;
+            if (pendingMessages_.size() > count)
+            {
+                auto& message = pendingMessages_.back();
+                message.hasNativeAnimation = true; message.nativeAnimation = frame.request;
+                message.nativeBlendFrames = frame.blendFrames; message.nativeAnimationOptions = frame.options;
+                char detail[224] = {};
+                std::snprintf(detail, sizeof(detail), "actor=%llu action=%llu animation=%d channel=%d rate=%.3f priority=%d",
+                    static_cast<unsigned long long>(message.ownerActorId), static_cast<unsigned long long>(message.actionId),
+                    frame.request.animationId, frame.request.channel, frame.request.playbackRate, frame.request.priority);
+                diagnostics_.Event("MultiplayerOwnerAttackAnimationCaptured", detail);
+            }
+        }
         PlayerActionEventQueue::Batch batch;
         eventQueue_.Drain(batch);
         auto& abilities = batch.abilities;
@@ -709,7 +739,12 @@ namespace fable::multiplayer::replication
         }
         while (!abilities.empty())
         {
-            unmatchedAbilities_.push_back(abilities.front());
+            const auto* ownerState = localHero_->CurrentState();
+            // Melee/unarmed attacks are authored by the actual animation
+            // boundary above, not an input request or an action's early ID.
+            const bool nativeMelee = abilities.front().attackCommand && ownerState &&
+                ownerState->heroEquipment.activeFamily != game::creature::equipment::CreatureWeaponFamily::Ranged;
+            if (!nativeMelee) unmatchedAbilities_.push_back(abilities.front());
             abilities.pop_front();
         }
         while (!actions.empty())
@@ -964,6 +999,7 @@ namespace fable::multiplayer::replication
 
     void LocalPlayerActionCapture::Shutdown() noexcept
     {
+        game::creature::animation::CreatureActionAnimationSelectionHook::WatchLocalHero(nullptr);
         eventQueue_.SetAccepting(false);
         if (actionObserver_ != nullptr)
         {

@@ -1,5 +1,6 @@
 #include "Game/Creature/Actions/Native/CreatureMotionActionFunctions.h"
 #include "Game/Creature/Actions/Hooks/CreatureActionLifecycleObserver.h"
+#include "Game/Creature/Animation/Hooks/CreatureActionAnimationSelectionHook.h"
 #include "Game/Creature/Combat/CreatureCombatService.h"
 #include "Game/Creature/Locomotion/Hooks/CreatureModeManagerObserver.h"
 #include "Game/HeroPawn/Abilities/HeroWillAbilityService.h"
@@ -115,6 +116,12 @@ namespace fable::multiplayer::replication
 
 namespace fable::multiplayer::presentation
 {
+    bool RemotePlayerRegistry::PerformOwnerAttack(const protocol::PlayerActionMessage& message)
+    {
+        ++g_performedAbilityCount;
+        g_lastPerformedAnimationId = message.nativeAnimation.animationId;
+        return g_remoteActionLifecycleReady;
+    }
     bool RemotePlayerRegistry::IsLifecycleActive(
         const std::uint64_t,
         const std::uint32_t,
@@ -174,6 +181,12 @@ namespace fable::multiplayer::presentation
     {
         return false;
     }
+}
+
+namespace fable::game::creature::animation
+{
+    void CreatureActionAnimationSelectionHook::WatchLocalHero(void*) noexcept {}
+    bool CreatureActionAnimationSelectionHook::PopOwnerAttack(OwnerAttackFrame&) noexcept { return false; }
 }
 
 namespace fable::game::creature::actions::native

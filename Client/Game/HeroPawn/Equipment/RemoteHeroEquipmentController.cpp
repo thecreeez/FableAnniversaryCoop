@@ -410,14 +410,16 @@ namespace fable::game::hero_pawn::equipment
     {
         if (nativeHero_ != nullptr && state.IsSane())
         {
-            if (!native::HeroWeaponComponent::SetRemoteCombatStance(nativeHero_, state.combatStance))
+            if (!native::HeroWeaponComponent::SetRemoteCombatStance(nativeHero_, state.combatStance, state.flourishReady, state.combatStrafing, state.blocking))
                 diagnostics_.Event("MultiplayerCombatStanceRejected", "native predicate hook or state registration unavailable");
-            else if (!applied_.valid || applied_.combatStance != state.combatStance)
+            else if (!applied_.valid || applied_.combatStance != state.combatStance ||
+                applied_.combatStrafing != state.combatStrafing || applied_.flourishReady != state.flourishReady || applied_.blocking != state.blocking)
             {
                 char detail[160] = {};
-                std::snprintf(detail, sizeof(detail), "actor=%llu active=%d native=%d",
+                std::snprintf(detail, sizeof(detail), "actor=%llu active=%d native=%d strafe=%d flourish=%d block=%d",
                     static_cast<unsigned long long>(actorId_), state.combatStance ? 1 : 0,
-                    native::HeroWeaponComponent::ReadCombatStance(nativeHero_) ? 1 : 0);
+                    native::HeroWeaponComponent::ReadCombatStance(nativeHero_) ? 1 : 0,
+                    state.combatStrafing ? 1 : 0, state.flourishReady ? 1 : 0, state.blocking ? 1 : 0);
                 diagnostics_.Event("MultiplayerCombatStanceApplied", detail);
             }
         }
@@ -478,7 +480,7 @@ namespace fable::game::hero_pawn::equipment
         }
         const HeroWeaponDefinitions desiredWeapons =
             desired.WeaponDefinitions();
-        if (!prunedPresentation_.Equals(desired) &&
+        if (!prunedPresentation_.SameCarryState(desired) &&
             now >= nextPruneAttemptAt_)
         {
             std::size_t removed = 0;
@@ -515,7 +517,7 @@ namespace fable::game::hero_pawn::equipment
                 nextPruneAttemptAt_ = now + 500;
             }
         }
-        if (!attempted_.Equals(desired))
+        if (!attempted_.SameCarryState(desired))
         {
             attempted_ = desired;
             preparedWeapons_ = {};
@@ -530,8 +532,11 @@ namespace fable::game::hero_pawn::equipment
             }
         }
 
-        if (applied_.Equals(desired))
+        if (applied_.SameCarryState(desired))
         {
+            // Combat pose and flourish updates must not re-equip a weapon or
+            // reset its readiness while a native attack is already in flight.
+            applied_ = desired;
             (void)WarmWeaponCache(desired, now);
             return;
         }

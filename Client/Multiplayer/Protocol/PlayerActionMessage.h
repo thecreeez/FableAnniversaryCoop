@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Game/HeroPawn/Equipment/HeroEquipmentState.h"
+#include "Game/Creature/Animation/AnimationPlaybackRequest.h"
 #include "Game/HeroPawn/Abilities/HeroAbility.h"
 #include "Multiplayer/Protocol/SessionTime.h"
 
@@ -83,6 +84,9 @@ namespace fable::multiplayer::protocol
         std::uint64_t targetPlayerActorId = 0;
         std::uint64_t targetThingUid = 0;
         float motion[5] = {};
+        bool hasNativeAnimation = false;
+        game::creature::animation::native::AnimationPlaybackRequest nativeAnimation;
+        std::int32_t nativeBlendFrames = 0, nativeAnimationOptions = 0;
         std::string mapName;
         std::string semanticName;
         std::string resolvedActionType;

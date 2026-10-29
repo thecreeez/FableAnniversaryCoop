@@ -1,4 +1,5 @@
 #include "SavedEntityConstructionGate.h"
+#include "Game/Persistence/CheckpointLoadScope.h"
 
 #include "Game/Entity/Persistence/Hooks/SavedEntityMapBlobObserver.h"
 #include "Multiplayer/Authority/AuthorityReplication.h"
@@ -132,6 +133,7 @@ namespace fable::multiplayer::persistence
         noexcept
     {
         auto* const gate = static_cast<SavedEntityConstructionGate*>(context);
+        if (game::persistence::pairedCheckpointLoad.load(std::memory_order_acquire)) return;
         if (gate == nullptr || gate->role_ != PeerRole::Guest ||
             event.phase != game::entity::persistence::
                 SavedEntityMapCollectionPhase::Complete)

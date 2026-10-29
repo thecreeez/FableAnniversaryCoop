@@ -45,6 +45,14 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Multiplayer\Protocol\WorldClockMessage.cpp" />
+    <ClCompile Include="Multiplayer\World\WorldClockSyncService.cpp" />
+    <ClCompile Include="Multiplayer\World\WeatherSyncService.cpp" />
+    <ClCompile Include="Multiplayer\Presentation\EffectSyncService.cpp" />
+    <ClCompile Include="Multiplayer\Protocol\EffectMessage.cpp" />
+    <ClCompile Include="Multiplayer\Protocol\WeatherMessage.cpp" />
+    <ClCompile Include="Multiplayer\World\DestructibleSyncService.cpp" />
+    <ClCompile Include="Multiplayer\Persistence\SessionCheckpointService.cpp" />
     <ClCompile Include="DeveloperTools\DeveloperToolTypes.cpp" />
     <ClCompile Include="DeveloperTools\DeveloperCommandQueue.cpp" />
     <ClCompile Include="DeveloperTools\DeveloperToolBackend.cpp" />
@@ -343,6 +351,15 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClCompile Include="UI\Runtime\GameWindowRuntime.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Multiplayer\Protocol\WorldClockMessage.h" />
+    <ClInclude Include="Multiplayer\World\WorldClockSyncService.h" />
+    <ClInclude Include="Multiplayer\World\WeatherSyncService.h" />
+    <ClInclude Include="Multiplayer\Presentation\EffectSyncService.h" />
+    <ClInclude Include="Multiplayer\Protocol\EffectMessage.h" />
+    <ClInclude Include="Multiplayer\Protocol\WeatherMessage.h" />
+    <ClInclude Include="Multiplayer\World\DestructibleSyncService.h" />
+    <ClInclude Include="Multiplayer\Persistence\SessionCheckpointService.h" />
+    <ClInclude Include="Game\Persistence\CheckpointLoadScope.h" />
     <ClInclude Include="DeveloperTools\DeveloperToolTypes.h" />
     <ClInclude Include="DeveloperTools\DeveloperCommandQueue.h" />
     <ClInclude Include="DeveloperTools\DeveloperToolBackend.h" />
@@ -390,6 +407,7 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClInclude Include="Game\Creature\Actions\CreatureActionLifecycleEvent.h" />
     <ClInclude Include="Game\Creature\Actions\Native\CreatureActionFunctions.h" />
     <ClInclude Include="Game\Creature\Animation\CreatureAnimationService.h" />
+    <ClInclude Include="Game\Creature\Animation\AnimationPlaybackRequest.h" />
     <ClInclude Include="Game\Creature\Animation\Native\AnimationPlaybackFunctions.h" />
     <ClInclude Include="Game\Creature\Animation\Hooks\CreatureActionAnimationSelectionHook.h" />
     <ClInclude Include="Game\Creature\Combat\Bindings\CreatureCombatBindings.h" />

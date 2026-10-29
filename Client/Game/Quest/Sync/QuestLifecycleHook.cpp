@@ -2,6 +2,7 @@
 
 #include "Core/Target/ExecutableValidator.h"
 #include "Game/Native/Addresses.h"
+#include "Game/Entity/Native/ThingComponentAccess.h"
 
 #include <cstdio>
 #include <cstring>
@@ -27,6 +28,33 @@ namespace
         fable::game::native::CharString*, const char*, int);
     using CharStringDestructor = void(__thiscall*)(
         fable::game::native::CharString*);
+
+    std::uint32_t CardDefinition(void* card) noexcept
+    {
+        __try { return card != nullptr ? *reinterpret_cast<const std::uint16_t*>(static_cast<unsigned char*>(card) + 0x98) : 0; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    }
+
+    bool AssignCardQuest(void* component, const char* quest, std::uintptr_t base) noexcept
+    {
+        fable::game::native::CharString name;
+        bool built = false, assigned = false;
+        __try
+        {
+            reinterpret_cast<CharStringConstructor>(base + fable::game::native::rva::CharStringConstructor)(&name, quest, -1);
+            built = true;
+            using Assign = void(__thiscall*)(void*, const fable::game::native::CharString*);
+            reinterpret_cast<Assign>(base + 0x012B7B30)(static_cast<unsigned char*>(component) + 0x28, &name);
+            assigned = true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { assigned = false; }
+        if (built)
+        {
+            __try { reinterpret_cast<CharStringDestructor>(base + fable::game::native::rva::CharStringDestructor)(&name); }
+            __except (EXCEPTION_EXECUTE_HANDLER) {}
+        }
+        return assigned;
+    }
 
     std::array<std::uint8_t, 14> RebasedSehPrefix(
         const std::uintptr_t base,
@@ -72,6 +100,7 @@ namespace fable::multiplayer::persistence
 {
     QuestLifecycleHook* QuestLifecycleHook::active_ = nullptr;
     thread_local bool QuestLifecycleHook::replaying_ = false;
+    thread_local bool QuestLifecycleHook::acceptingRemoteCard_ = false;
 
     bool QuestLifecycleHook::Install(
         const HMODULE gameModule,
@@ -105,7 +134,16 @@ namespace fable::multiplayer::persistence
         const auto activatePrefix = RebasedSehPrefix(base, ActivateScopeTable);
         const auto completePrefix = RebasedSehPrefix(base, CompleteScopeTable);
         const auto failPrefix = RebasedSehPrefix(base, FailScopeTable);
+        const auto acceptPrefix = RebasedSehPrefix(base, 0x0255DE48);
+        const std::uint8_t rebuildPrefix[] = {0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8};
+        const std::uint8_t eligibilityPrefix[] = {0x83, 0xEC, 0x08, 0x53, 0x8B, 0xD9};
         const bool installed =
+            cardEligible_.Install(at(0x01A7D3E0), eligibilityPrefix, sizeof(eligibilityPrefix),
+                reinterpret_cast<void*>(&CardEligible), sizeof(eligibilityPrefix)) &&
+            acceptCard_.Install(at(0x01BC2820), acceptPrefix.data(), 7,
+                reinterpret_cast<void*>(&CardAccepted), 7) &&
+            rebuildMenu_.Install(at(0x01A28E10), rebuildPrefix, sizeof(rebuildPrefix),
+                reinterpret_cast<void*>(&MenuRebuilt), sizeof(rebuildPrefix)) &&
             activate_.Install(
                 at(game::native::rva::QuestManagerActivate),
                 activatePrefix.data(), activatePrefix.size(),
@@ -130,6 +168,9 @@ namespace fable::multiplayer::persistence
             Shutdown();
             return false;
         }
+        originalAcceptCard_ = reinterpret_cast<AcceptCardFn>(acceptCard_.Original());
+        originalCardEligible_ = reinterpret_cast<CardEligibleFn>(cardEligible_.Original());
+        originalRebuildMenu_ = reinterpret_cast<RebuildMenuFn>(rebuildMenu_.Original());
         originalActivate_ = reinterpret_cast<ActivateFn>(activate_.Original());
         originalDeactivate_ = reinterpret_cast<DeactivateFn>(deactivate_.Original());
         originalComplete_ = reinterpret_cast<ResolveFn>(complete_.Original());
@@ -143,7 +184,7 @@ namespace fable::multiplayer::persistence
 
     void QuestLifecycleHook::Shutdown() noexcept
     {
-        const bool stopped = fail_.Shutdown() & complete_.Shutdown() &
+        const bool stopped = cardEligible_.Shutdown() & acceptCard_.Shutdown() & rebuildMenu_.Shutdown() & fail_.Shutdown() & complete_.Shutdown() &
             deactivate_.Shutdown() & activate_.Shutdown();
         if (!stopped)
         {
@@ -155,6 +196,11 @@ namespace fable::multiplayer::persistence
         originalDeactivate_ = nullptr;
         originalComplete_ = nullptr;
         originalFail_ = nullptr;
+        originalAcceptCard_ = nullptr;
+        originalRebuildMenu_ = nullptr;
+        originalCardEligible_ = nullptr;
+        questInventory_ = nullptr;
+        localHero_ = nullptr;
         AcquireSRWLockExclusive(&queueLock_);
         queueHead_ = 0;
         queueCount_ = 0;
@@ -171,6 +217,11 @@ namespace fable::multiplayer::persistence
     {
         QuestLifecycleHook* const self = active_;
         if (self == nullptr || self->originalActivate_ == nullptr) return false;
+        if (acceptingRemoteCard_)
+        {
+            char quest[128] = {};
+            if (ReadName(name, quest, sizeof(quest)) && self->IsActive(quest)) return true;
+        }
         if (!replaying_ && self->IsDuplicate(QuestEventOperation::Activate, name)) return true;
         const bool accepted = self->originalActivate_(manager, name, a2, a3);
         self->generation_.fetch_add(1, std::memory_order_acq_rel);
@@ -338,6 +389,225 @@ namespace fable::multiplayer::persistence
             __except (EXCEPTION_EXECUTE_HANDLER) {}
         }
         return result;
+    }
+
+    bool __fastcall QuestLifecycleHook::CardEligible(void* card, void*)
+    {
+        if (acceptingRemoteCard_) return true; // Initiator already passed the retail requirements.
+        auto* self = active_;
+        return self != nullptr && self->originalCardEligible_ != nullptr && self->originalCardEligible_(card);
+    }
+
+    bool __fastcall QuestLifecycleHook::CardAccepted(void* manager, void*, void* card, int flags)
+    {
+        auto* self = active_;
+        if (self == nullptr || self->originalAcceptCard_ == nullptr) return false;
+        auto* component = static_cast<unsigned char*>(game::entity::native::ThingComponentAccess::Find(
+            card, static_cast<game::entity::native::ThingComponentType>(0x6C)));
+        char quest[128] = {};
+        const auto definition = CardDefinition(card);
+        if (component != nullptr) ReadName(reinterpret_cast<game::native::CharString*>(component + 0x28), quest, sizeof(quest));
+        const bool accepted = self->originalAcceptCard_(manager, card, flags);
+        if (accepted && !replaying_ && quest[0] != '\0')
+        {
+            const auto base = reinterpret_cast<std::uintptr_t>(self->gameModule_);
+            game::native::CharString name;
+            reinterpret_cast<CharStringConstructor>(base + game::native::rva::CharStringConstructor)(&name, quest, -1);
+            self->Record(QuestEventOperation::AcceptQuestCard, &name, definition, 0, 0);
+            reinterpret_cast<CharStringDestructor>(base + game::native::rva::CharStringDestructor)(&name);
+        }
+        return accepted;
+    }
+
+    void __fastcall QuestLifecycleHook::MenuRebuilt(void* inventory, void*)
+    {
+        auto* self = active_;
+        if (self == nullptr || self->originalRebuildMenu_ == nullptr) return;
+        self->questInventory_ = inventory;
+        self->originalRebuildMenu_(inventory);
+    }
+
+    void QuestLifecycleHook::RefreshOpenMenu() noexcept
+    {
+        const auto base = reinterpret_cast<std::uintptr_t>(gameModule_);
+        __try
+        {
+            auto* inventory = static_cast<unsigned char*>(game::entity::native::ThingComponentAccess::Find(
+                localHero_, static_cast<game::entity::native::ThingComponentType>(0x19)));
+            if (inventory == nullptr || originalRebuildMenu_ == nullptr ||
+                *reinterpret_cast<std::uintptr_t*>(inventory) != base + 0x02B00394 ||
+                inventory[0x60] == 0) return;
+            originalRebuildMenu_(inventory);
+            reinterpret_cast<void(__thiscall*)(void*, bool)>(base + 0x019EF818)(inventory + 0x184, true);
+            diagnostics_.Event("MultiplayerOpenQuestMenuRefreshed", "native quest list rebuilt without closing inventory");
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { questInventory_ = nullptr; }
+    }
+
+    bool QuestLifecycleHook::OpenMenuForTest() noexcept
+    {
+        const auto base = reinterpret_cast<std::uintptr_t>(gameModule_);
+        void* inventory = game::entity::native::ThingComponentAccess::Find(localHero_,
+            static_cast<game::entity::native::ThingComponentType>(0x19));
+        __try
+        {
+            if (inventory == nullptr || *reinterpret_cast<std::uintptr_t*>(inventory) != base + 0x02B00394) return false;
+            auto** table = *reinterpret_cast<void***>(inventory);
+            if (reinterpret_cast<std::uintptr_t>(table[32]) != base + 0x01A2B810) return false;
+            reinterpret_cast<void(__thiscall*)(void*)>(table[32])(inventory);
+            return static_cast<unsigned char*>(inventory)[0x60] != 0;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
+    void* QuestLifecycleHook::CreateCard(std::uint32_t definition, const char* quest) noexcept
+    {
+        if (definition == 0 || definition > 0xFFFF || localHero_ == nullptr) return nullptr;
+        const auto base = reinterpret_cast<std::uintptr_t>(gameModule_);
+        game::native::CharString empty;
+        bool built = false;
+        void* result = nullptr;
+        __try
+        {
+            const auto* entry = reinterpret_cast<const unsigned char*>(base + 0x01B58490);
+            if (entry[0] != 0x6A || entry[1] != 0xFF || entry[2] != 0x68 ||
+                *reinterpret_cast<const std::uintptr_t*>(entry + 3) != base + 0x02555780) return nullptr;
+            reinterpret_cast<CharStringConstructor>(base + game::native::rva::CharStringConstructor)(&empty, "", -1);
+            built = true;
+            void* position = reinterpret_cast<void*(__thiscall*)(void*)>(base + 0x01B2B440)(localHero_);
+            const int map = *reinterpret_cast<signed char*>(static_cast<unsigned char*>(localHero_) + 0x9C);
+            using Factory = void*(__cdecl*)(int, void*, int, int, int, int, game::native::CharString*);
+            result = reinterpret_cast<Factory>(base + 0x01B58490)(definition, position, map, 1, 0, 0, &empty);
+            void* component = game::entity::native::ThingComponentAccess::Find(result,
+                static_cast<game::entity::native::ThingComponentType>(0x6C));
+            // Stock GiveQuestCard assigns its separate script-name argument
+            // after constructing the definition (0189AEE2..0189AEEA).
+            if (component == nullptr || !AssignCardQuest(component, quest, base))
+            {
+                if (result != nullptr) reinterpret_cast<void(__thiscall*)(void*, bool)>(base + 0x01B2E530)(result, false);
+                result = nullptr;
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { result = nullptr; }
+        if (built)
+        {
+            __try { reinterpret_cast<CharStringDestructor>(base + game::native::rva::CharStringDestructor)(&empty); }
+            __except (EXCEPTION_EXECUTE_HANDLER) {}
+        }
+        return result;
+    }
+
+    bool QuestLifecycleHook::AcceptAvailableCardForTest(char (&quest)[128]) noexcept
+    {
+        quest[0] = 0;
+        const auto base = reinterpret_cast<std::uintptr_t>(gameModule_);
+        __try
+        {
+            auto* manager = static_cast<unsigned char*>(Manager());
+            if (manager == nullptr) return false;
+            auto* head = *reinterpret_cast<unsigned char**>(manager + 0x88);
+            auto* node = *reinterpret_cast<unsigned char**>(head);
+            for (unsigned count = 0; node != head && count < 1024; ++count)
+            {
+                auto* next = *reinterpret_cast<unsigned char**>(node);
+                void* card = reinterpret_cast<void*(__thiscall*)(void*)>(base + 0x012E6EA0)(node + 8);
+                auto* component = static_cast<unsigned char*>(game::entity::native::ThingComponentAccess::Find(
+                    card, static_cast<game::entity::native::ThingComponentType>(0x6C)));
+                char candidate[128] = {};
+                if (component != nullptr && *reinterpret_cast<int*>(component + 0x14) < 0 &&
+                    ReadName(reinterpret_cast<game::native::CharString*>(component + 0x28), candidate, sizeof(candidate)) &&
+                    !IsActive(candidate) && !IsCompleted(candidate) &&
+                    reinterpret_cast<AcceptCardFn>(base + 0x01BC2820)(manager, card, 0))
+                {
+                    std::memcpy(quest, candidate, sizeof(quest));
+                    return true;
+                }
+                node = next;
+            }
+            struct Offer { const char* definition; const char* quest; };
+            const Offer offers[] = {
+                {"OBJECT_QUEST_CARD_BREAK_SIEGE", "Q_BreakSiege"},
+                {"OBJECT_QUEST_CARD_LOST_TRADER", "V_LostTrader"},
+                {"OBJECT_QUEST_CARD_AMBUSH_TRADERS", "Q_AmbushTraders"},
+                {"OBJECT_QUEST_CARD_ASK_ORACLE", "Q_AwakeningTheOracle"}};
+            for (const auto& offer : offers)
+            {
+                const char* definitionName = offer.definition;
+                game::native::CharString name;
+                reinterpret_cast<CharStringConstructor>(base + game::native::rva::CharStringConstructor)(&name, definitionName, -1);
+                void* thingManager = *reinterpret_cast<void**>(base + game::native::rva::ThingManagerSlot);
+                void* definitions = thingManager != nullptr ? *reinterpret_cast<void**>(static_cast<unsigned char*>(thingManager) + 0x2C) : nullptr;
+                const int definition = definitions != nullptr ? reinterpret_cast<int(__thiscall*)(void*, game::native::CharString*)>(base + game::native::rva::DefinitionIndexByName)(definitions, &name) : 0;
+                reinterpret_cast<CharStringDestructor>(base + game::native::rva::CharStringDestructor)(&name);
+                void* card = CreateCard(definition, offer.quest);
+                auto* component = static_cast<unsigned char*>(game::entity::native::ThingComponentAccess::Find(card,
+                    static_cast<game::entity::native::ThingComponentType>(0x6C)));
+                char candidate[128] = {};
+                if (component != nullptr) ReadName(reinterpret_cast<game::native::CharString*>(component + 0x28), candidate, sizeof(candidate));
+                char probe[256] = {};
+                std::snprintf(probe, sizeof(probe), "definition=%s index=%d component=%p quest=%s active=%d completed=%d eligible=%d",
+                    definitionName, definition, component, candidate, IsActive(candidate), IsCompleted(candidate),
+                    component != nullptr && originalCardEligible_(component));
+                diagnostics_.Event("QuestCardAcceptanceCandidate", probe);
+                if (component != nullptr && ReadName(reinterpret_cast<game::native::CharString*>(component + 0x28), candidate, sizeof(candidate)) &&
+                    !IsActive(candidate) && !IsCompleted(candidate) &&
+                    reinterpret_cast<AcceptCardFn>(base + 0x01BC2820)(manager, card, 0))
+                {
+                    std::memcpy(quest, candidate, sizeof(quest));
+                    return true;
+                }
+                if (card != nullptr) reinterpret_cast<void(__thiscall*)(void*, bool)>(base + 0x01B2E530)(card, false);
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        return false;
+    }
+
+    bool QuestLifecycleHook::AcceptCard(const char* quest, std::uint32_t definition) noexcept
+    {
+        if (quest == nullptr || originalAcceptCard_ == nullptr || Manager() == nullptr) return false;
+        const auto base = reinterpret_cast<std::uintptr_t>(gameModule_);
+        game::native::CharString name;
+        bool built = false, accepted = false;
+        const bool previousReplay = replaying_;
+        __try
+        {
+            reinterpret_cast<CharStringConstructor>(base + game::native::rva::CharStringConstructor)(&name, quest, -1);
+            built = true;
+            using Find = void*(__thiscall*)(void*, game::native::CharString*);
+            void* card = reinterpret_cast<Find>(base + 0x01BBAE60)(Manager(), &name);
+            bool created = false;
+            if (card == nullptr) { card = CreateCard(definition, quest); created = card != nullptr; }
+            if (card != nullptr)
+            {
+                auto* component = static_cast<unsigned char*>(game::entity::native::ThingComponentAccess::Find(card,
+                    static_cast<game::entity::native::ThingComponentType>(0x6C)));
+                char cardQuest[128] = {};
+                const bool matches = component != nullptr && ReadName(reinterpret_cast<game::native::CharString*>(component + 0x28), cardQuest, sizeof(cardQuest)) &&
+                    std::strcmp(cardQuest, quest) == 0;
+                if (!matches)
+                {
+                    if (created) reinterpret_cast<void(__thiscall*)(void*, bool)>(base + 0x01B2E530)(card, false);
+                }
+                else
+                {
+                acceptingRemoteCard_ = true;
+                replaying_ = true;
+                accepted = originalAcceptCard_(Manager(), card, 0);
+                if (!accepted && created) reinterpret_cast<void(__thiscall*)(void*, bool)>(base + 0x01B2E530)(card, false);
+                }
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { accepted = false; }
+        replaying_ = previousReplay;
+        acceptingRemoteCard_ = false;
+        if (built)
+        {
+            __try { reinterpret_cast<CharStringDestructor>(base + game::native::rva::CharStringDestructor)(&name); }
+            __except (EXCEPTION_EXECUTE_HANDLER) {}
+        }
+        if (accepted) { generation_.fetch_add(1); RefreshOpenMenu(); }
+        return accepted;
     }
 
     bool QuestLifecycleHook::IsActive(const char* const name) const noexcept

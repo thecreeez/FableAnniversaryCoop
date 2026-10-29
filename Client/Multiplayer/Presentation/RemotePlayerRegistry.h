@@ -1,4 +1,5 @@
 #pragma once
+#include "Game/Creature/Animation/AnimationPlaybackRequest.h"
 
 #include "Core/Diagnostics/Diagnostics.h"
 #include "Game/HeroPawn/Appearance/Hooks/RemoteHeroPresentationFactoryHook.h"
@@ -7,6 +8,7 @@
 #include "Game/HeroPawn/Remote/RemoteHeroActor.h"
 #include "Multiplayer/Presentation/RemotePlayerPartyHud.h"
 #include "Multiplayer/Replication/RemotePlayerChannels.h"
+#include "Multiplayer/Protocol/PlayerActionMessage.h"
 
 #include <cstdint>
 #include <memory>
@@ -91,6 +93,7 @@ namespace fable::multiplayer::presentation
         void CompleteWorldTransition() noexcept;
         void SetCutsceneHidden(bool hidden) noexcept;
         // Roll (motion = direction xyz + stick xy) or block start.
+        bool PerformOwnerAttack(const protocol::PlayerActionMessage& message);
         bool PerformMotion(std::uint64_t actorId, bool roll, const float (&motion)[5]);
         void DriveMovement();
         bool ApplyHealth(

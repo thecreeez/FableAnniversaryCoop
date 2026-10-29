@@ -61,6 +61,7 @@ namespace fable::multiplayer::world
         void Shutdown() noexcept;
         // Game thread.
         bool Process();
+        void ResetForReload() noexcept;
         bool HandleReliableMessage(const TransportMessage& message) override;
 
         // Demon door packets arrive through their own sink (one per packet

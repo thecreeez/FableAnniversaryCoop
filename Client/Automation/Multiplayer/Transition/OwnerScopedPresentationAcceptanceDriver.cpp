@@ -15,6 +15,21 @@
 namespace
 {
     constexpr std::uint64_t ExpectedStateSettleMilliseconds = 3'000;
+    bool AttachedOwnerWeaponsVisible(void* nativeHero) noexcept
+    {
+        fable::game::hero_pawn::equipment::native::HeroWeaponInspection state;
+        if (!fable::game::hero_pawn::equipment::native::HeroWeaponComponent::Inspect(nativeHero, state) || !state.readable)
+            return false;
+        __try
+        {
+            // CThing drawable bit, checked at native01B2D805..821.
+            return (!state.meleeAttachmentSlot || (state.meleeWeapon &&
+                (*(static_cast<const unsigned char*>(state.meleeWeapon) + 0x9D) & 0x20))) &&
+                (!state.rangedAttachmentSlot || (state.rangedWeapon &&
+                (*(static_cast<const unsigned char*>(state.rangedWeapon) + 0x9D) & 0x20)));
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
     // The route can finish on the same tick the peers reunite; the remote
     // presentation then still needs a moment to be rebuilt on the new map.
     constexpr std::uint64_t PostRouteOverlapGraceMilliseconds = 15'000;
@@ -379,7 +394,7 @@ namespace fable::automation::multiplayer::transition
             game::hero_pawn::appearance::native::HeroClothingComponent::
                 Capture(nativeHero, clothing) &&
             game::hero_pawn::equipment::native::HeroWeaponComponent::
-                Capture(nativeHero, equipment);
+                Capture(nativeHero, equipment) && AttachedOwnerWeaponsVisible(nativeHero);
         hero->Release();
         return ready;
     }

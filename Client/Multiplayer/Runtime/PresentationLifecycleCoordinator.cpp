@@ -37,6 +37,24 @@ namespace fable::multiplayer
         auto& entities = contexts.entities;
         auto& actions = contexts.actions;
         auto& diagnostics = graph.Diagnostics();
+        if (world.checkpoints.IsBarrierActive())
+        {
+            PlayerState control;
+            while (transport.transport.TryConsume(control)) transport.remotePlayerChannels.Apply(control, GetTickCount64());
+            if (!transport.reliableMessages.Pump()) diagnostics.Event("ClientFailed", "multiplayer-checkpoint-load-control-pump");
+        }
+        world.checkpoints.Process();
+        if (world.checkpoints.IsReloading()) return true;
+        if (world.checkpoints.IsBarrierActive())
+        {
+            // Keep the checkpoint control/baseline exchange alive, but never
+            // build bodies or replay native work from either side of rollback.
+            // The host can finish loading before the guest receives ReloadGo.
+            if (!graph.ProcessPlayerActorState()) diagnostics.Event("ClientFailed", "multiplayer-checkpoint-actor-state");
+            if (!world.questState.Process()) diagnostics.Event("ClientFailed", "multiplayer-checkpoint-quest-baseline");
+            if (!world.worldSections.Process()) diagnostics.Event("ClientFailed", "multiplayer-checkpoint-world-baseline");
+            return true;
+        }
         if (!world.questState.Process())
         {
             diagnostics.Event("ClientFailed", "multiplayer-quest-state-publication");
@@ -65,6 +83,10 @@ namespace fable::multiplayer
             }
         }
         world.scriptTracer.Process();
+        world.destructibles.Process();
+        if (!world.worldClock.Process()) diagnostics.Event("ClientFailed", "multiplayer-world-clock-sync");
+        if (!world.weather.Process()) diagnostics.Event("ClientFailed", "multiplayer-weather-sync");
+        if (!world.effects.Process()) diagnostics.Event("ClientFailed", "multiplayer-effect-sync");
         world.hudMessageProbe.Process();
         if (!world.cutsceneSync.Process())
         {

@@ -3,6 +3,7 @@
 #include "../../Diagnostics/EventLog.h"
 
 #include <iostream>
+#include <Windows.h>
 
 namespace fable::launcher::multiplayer
 {
@@ -11,6 +12,20 @@ namespace fable::launcher::multiplayer
         PeerHarness& peers = session.peers();
         Peer& host = peers.host();
         Peer& guest = peers.guest();
+
+        if (GetEnvironmentVariableW(L"ALBIONTOGETHER_SHARED_WORLD_TEST", nullptr, 0))
+        {
+            bool okay = peers.WaitEvent(host, "SharedWorldRangeVerified") && peers.WaitEvent(guest, "SharedWorldRangeVerified") &&
+                peers.WaitEvent(host, "MultiplayerGuestSleepAppliedByHost") &&
+                peers.WaitEvent(host, "SharedWorldGuestSleepVerified") && peers.WaitEvent(guest, "SharedWorldGuestSleepVerified") &&
+                peers.WaitEvent(guest, "SharedWorldGuestSmashIssued") && peers.WaitEvent(host, "MultiplayerDestructibleApplied") &&
+                peers.WaitEvent(guest, "SharedWorldTerminalDeathVerified") && peers.WaitEvent(host, "SharedWorldTerminalDeathVerified") &&
+                peers.WaitEvent(host, "SharedWorldCheckpointVerified") && peers.WaitEvent(guest, "SharedWorldCheckpointVerified") &&
+                peers.IsResponsive(host) && peers.IsResponsive(guest);
+            const bool stopped = session.Shutdown();
+            std::wcout << L"Shared world acceptance: " << (okay && stopped ? L"PASS" : L"FAIL") << L"\nState root: " << session.context().sessionRoot.wstring() << L"\n";
+            return okay && stopped ? 0 : 1;
+        }
 
         // Every co-op feature hook must be installed on both peers.
         const char* const hooks[] = {

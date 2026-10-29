@@ -30,7 +30,7 @@ namespace
         std::uint8_t operation = 0;
         std::uint8_t componentFlags = 0;
         std::uint8_t role = 0;
-        std::uint8_t reserved = 0;
+        std::uint8_t appearanceFlags = 0; // bit0 native Teenager, bit1 child model
         std::uint64_t actorId = 0;
         std::uint32_t authorityEpoch = 0;
         std::uint32_t actorGeneration = 0;
@@ -299,7 +299,7 @@ namespace
         const bool activeTransition =
             wire.transitionStartedAtSessionTimeMs !=
                 fable::multiplayer::protocol::SessionTimeUnset;
-        return wire.combatStance <= 1 && saneFamily && availableFamily &&
+        return wire.combatStance <= 15 && saneFamily && availableFamily &&
             (!activeTransition || wire.equipmentTransitionActionId != 0) &&
             IsSaneTransitionFields(
                 wire.transitionStartedAtSessionTimeMs,
@@ -322,7 +322,8 @@ namespace
     {
         const auto operation = static_cast<PlayerActorStateOperation>(
             wire.operation);
-        if (!IsOperationValid(operation) || wire.reserved != 0 ||
+        if (!IsOperationValid(operation) || (wire.appearanceFlags & ~3u) != 0 ||
+            (wire.appearanceFlags && !(wire.componentFlags & fable::multiplayer::protocol::player_actor_state_flag::AppearancePresent)) ||
             (wire.componentFlags & ~fable::multiplayer::protocol::
                 player_actor_state_flag::All) != 0 ||
             wire.actorId == 0 || wire.authorityEpoch == 0 ||
@@ -547,6 +548,7 @@ namespace fable::multiplayer::protocol
         wire.operation = static_cast<std::uint8_t>(message.operation);
         wire.componentFlags = message.componentFlags;
         wire.role = static_cast<std::uint8_t>(message.role);
+        if (message.AppearancePresent()) wire.appearanceFlags = (message.heroMorph.child ? 1 : 0) | (message.heroMorph.childhood ? 2 : 0);
         wire.actorId = message.actorId;
         wire.authorityEpoch = message.authorityEpoch;
         wire.actorGeneration = message.actorGeneration;
@@ -624,7 +626,7 @@ namespace fable::multiplayer::protocol
                 message.heroEquipment.rangedAttachmentSlot;
             wire.equipmentTransitionActionId =
                 message.heroEquipment.transitionActionId;
-            wire.combatStance = message.heroEquipment.combatStance ? 1 : 0;
+            wire.combatStance = (message.heroEquipment.combatStance ? 1 : 0) | (message.heroEquipment.flourishReady ? 2 : 0) | (message.heroEquipment.combatStrafing ? 4 : 0) | (message.heroEquipment.blocking ? 8 : 0);
             wire.activeWeaponFamily = static_cast<std::uint8_t>(
                 message.heroEquipment.activeFamily);
         }
@@ -678,6 +680,8 @@ namespace fable::multiplayer::protocol
         if (message.AppearancePresent())
         {
             message.heroMorph.valid = true;
+            message.heroMorph.child = (wire.appearanceFlags & 1) != 0;
+            message.heroMorph.childhood = (wire.appearanceFlags & 2) != 0;
             message.heroMorph.strength = wire.heroMorph[0];
             message.heroMorph.berserk = wire.heroMorph[1];
             message.heroMorph.will = wire.heroMorph[2];
@@ -737,7 +741,10 @@ namespace fable::multiplayer::protocol
                 wire.rangedWeaponAttachmentSlot;
             message.heroEquipment.transitionActionId =
                 wire.equipmentTransitionActionId;
-            message.heroEquipment.combatStance = wire.combatStance != 0;
+            message.heroEquipment.combatStance = (wire.combatStance & 1) != 0;
+            message.heroEquipment.flourishReady = (wire.combatStance & 2) != 0;
+            message.heroEquipment.combatStrafing = (wire.combatStance & 4) != 0;
+            message.heroEquipment.blocking = (wire.combatStance & 8) != 0;
             message.heroEquipment.activeFamily = static_cast<
                 game::creature::equipment::CreatureWeaponFamily>(
                     wire.activeWeaponFamily);

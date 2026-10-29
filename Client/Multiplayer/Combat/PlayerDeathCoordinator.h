@@ -3,6 +3,7 @@
 
 #include "Core/Diagnostics/Diagnostics.h"
 #include "Game/Creature/Combat/CombatHealthMutationEvent.h"
+#include "Multiplayer/Protocol/PlayerState.h"
 
 #include <atomic>
 #include <cstddef>
@@ -45,6 +46,10 @@ namespace fable::multiplayer::combat
         void Shutdown() noexcept;
         bool IsReady() const noexcept { return initialized_ && originalDeath_ != nullptr; }
         bool DamageForAcceptance(void* hero, float damage) noexcept;
+        bool ConsumeFlaskForAcceptance(void* hero) noexcept;
+        void SetRole(PeerRole role) noexcept { role_ = role; }
+        bool IsTerminalDead() const noexcept { return terminalDead_.load(std::memory_order_acquire); }
+        void ResetForCheckpointLoad() noexcept;
 
     private:
         using NativeDeathFn = int(__thiscall*)(void*);
@@ -86,5 +91,7 @@ namespace fable::multiplayer::combat
         std::atomic_bool acceptingEvents_{false};
         std::atomic_uint droppedEvents_{0};
         bool initialized_ = false;
+        PeerRole role_ = PeerRole::Guest;
+        std::atomic_bool terminalDead_{false};
     };
 }

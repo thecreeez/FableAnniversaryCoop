@@ -1121,8 +1121,11 @@ namespace fable::multiplayer::authority
         std::uint32_t mapEpoch) const noexcept
     {
         const ActionAuthorityLease* const action = actions_.Find(entity);
+        // A player's attack engagement reserves the interaction; it does not
+        // transfer the victim NPC's AI/action publication away from its simulator.
         if (action != nullptr &&
             action->kind != protocol::ActionLeaseKind::Ambient &&
+            action->kind != protocol::ActionLeaseKind::PrimaryAttacker &&
             action->mapName == mapName && action->mapEpoch == mapEpoch)
         {
             return action->actorId == actorId;

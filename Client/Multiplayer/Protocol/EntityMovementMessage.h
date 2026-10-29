@@ -24,6 +24,7 @@ namespace fable::multiplayer::protocol
         float facing = 0.0f;
         float angularVelocity = 0.0f;
         bool moving = false;
+        std::uint8_t combatFlags = 0; // stance, strafe, blocking
     };
 
     bool EncodeEntityMovementMessage(

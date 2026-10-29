@@ -13,6 +13,7 @@
 #include "Multiplayer/Transport/UdpPeer.h"
 
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -91,15 +92,14 @@ namespace fable::multiplayer::world
         nextHistoryAt_ = 0;
         currentMapId_ = 0;
         previousMapId_ = 0;
-        lastReleasedName_.clear();
-        lastReleasedAt_ = 0;
         diagnostics_ = {};
         role_ = PeerRole::Guest;
         localActorId_ = 0;
         nextRevision_ = 0;
         peerPlays_.clear();
+        peerSkips_.clear();
         outboundPlays_.clear();
-        gatheredSince_ = 0;
+        immediatePlays_.clear(); recentReleases_.clear(); missingSince_ = 0;
     }
 
     bool __cdecl CutsceneSyncService::Gate(void* const context, const char* const name)
@@ -133,8 +133,27 @@ namespace fable::multiplayer::world
                     return true;
                 }
             }
+            const auto* local = localHero_ ? localHero_->CurrentState() : nullptr;
+            anchored_ = false;
+            missingSince_ = 0;
+            if (localHero_ && localHero_->IsWorldReady() && local)
+            {
+                // The gathering circle is the new scene's trigger, even when
+                // another scene just finished in this very script frame.
+                anchor_ = {local->position, local->facing, local->mapId};
+                anchored_ = true;
+                std::string missing;
+                std::uint32_t present = 0, total = 1;
+                const bool gathered = AllPlayersGathered(missing, present, total);
+                anchored_ = false;
+                if (gathered)
+                {
+                    immediatePlays_.push_back({name, local->mapId});
+                    diagnostics_.Event("CutsceneStartedAlreadyGathered", name);
+                    return true;
+                }
+            }
             holdState_ = HoldState::Waiting;
-            gatheredSince_ = 0;
             heldName_ = name;
             heldSince_ = GetTickCount64();
             nextWaitingReportAt_ = 0;
@@ -210,9 +229,38 @@ namespace fable::multiplayer::world
         if (gathered) ++present;
         else missing = "self";
         const std::uint64_t now = GetTickCount64();
-        for (const replication::RemotePlayerSnapshot& remote : remotePlayers_->Snapshots())
+        const auto snapshots = remotePlayers_->Snapshots();
+        auto connected = transport_ ? transport_->ConnectedActorIds() : std::vector<std::uint64_t>{};
+        // ConnectedActorIds is host-only: guests receive the other actors via
+        // host relaying. Their logical roster must still count every player.
+        if (role_ == PeerRole::Guest && transport_ && transport_->HasPeer())
+        {
+            bool hostKnown = false;
+            for (const auto& remote : snapshots)
+            {
+                connected.push_back(remote.state.actorId);
+                hostKnown = hostKnown || remote.state.role == PeerRole::Host;
+            }
+            if (!hostKnown)
+            {
+                ++total;
+                gathered = false;
+                if (!missing.empty()) missing += ",";
+                missing += "host";
+            }
+        }
+        for (const auto actor : connected)
         {
             ++total;
+            const auto found = std::find_if(snapshots.begin(), snapshots.end(), [actor](const auto& remote) { return remote.state.actorId == actor; });
+            if (found == snapshots.end())
+            {
+                gathered = false;
+                if (!missing.empty()) missing += ",";
+                missing += std::to_string(actor);
+                continue;
+            }
+            const auto& remote = *found;
             const PlayerState& state = remote.state;
             // Different regions can share coordinates, so the map must match
             // by id and name, and the remote report must be current (a peer
@@ -232,11 +280,12 @@ namespace fable::multiplayer::world
         return gathered;
     }
 
-    bool CutsceneSyncService::SendPlay(const std::string& name, const std::uint16_t mapId)
+    bool CutsceneSyncService::SendPlay(const std::string& name, const std::uint16_t mapId, const bool skip)
     {
         protocol::CutsceneMessage message;
         message.revision = ++nextRevision_;
         message.mapId = mapId;
+        message.skip = skip;
         if (name.empty() || name.size() >= protocol::MaximumCutsceneNameBytes) return false;
         message.nameLength = static_cast<std::uint8_t>(name.size());
         std::memcpy(message.name, name.data(), name.size());
@@ -261,6 +310,22 @@ namespace fable::multiplayer::world
         const PlayerState* const local = localHero_ != nullptr ? localHero_->CurrentState() : nullptr;
         const std::uint16_t localMap = local != nullptr ? local->mapId : 0;
         const bool worldSettled = localHero_ != nullptr && localHero_->IsWorldReady() && local != nullptr;
+        std::string skippedName;
+        if (observer_ != nullptr && observer_->PopSkip(skippedName))
+        {
+            outboundPlays_.push_back({skippedName, localMap, true});
+            diagnostics_.Event("CutsceneSkipLocal", skippedName.c_str());
+        }
+        for (auto it = peerSkips_.begin(); it != peerSkips_.end();)
+        {
+            if (it->mapId == localMap && observer_ != nullptr && observer_->RequestSkip(it->name.c_str()))
+            {
+                diagnostics_.Event("CutsceneSkipApplied", it->name.c_str());
+                it = peerSkips_.erase(it);
+            }
+            else if (now - it->receivedAt > 10000) it = peerSkips_.erase(it);
+            else ++it;
+        }
 
         std::string releaseName;
         bool timedOut = false;
@@ -269,6 +334,13 @@ namespace fable::multiplayer::world
         std::uint32_t total = 1;
         {
             std::lock_guard<std::mutex> lock(holdMutex_);
+            while (!immediatePlays_.empty())
+            {
+                const auto& play = immediatePlays_.front();
+                recentReleases_.push_back({play.name, play.mapId, now, true});
+                outboundPlays_.push_back(play);
+                immediatePlays_.pop_front();
+            }
             waiting = holdState_ == HoldState::Waiting;
             TrackMap(worldSettled ? local : nullptr);
             if (!waiting) RecordHistory(worldSettled ? local : nullptr, now);
@@ -277,16 +349,9 @@ namespace fable::multiplayer::world
             {
                 std::string missing;
                 const bool gathered = worldSettled && AllPlayersGathered(missing, present, total);
-                if (!gathered)
+                if (gathered)
                 {
-                    gatheredSince_ = 0;
-                }
-                else if (gatheredSince_ == 0)
-                {
-                    gatheredSince_ = now;
-                }
-                if (gathered && now - gatheredSince_ >= GatherStableMilliseconds)
-                {
+                    missingSince_ = 0;
                     releaseName = heldName_;
                 }
                 else if (now - heldSince_ > HoldTimeoutMilliseconds)
@@ -303,13 +368,15 @@ namespace fable::multiplayer::world
                         static_cast<unsigned long long>(now - heldSince_));
                     diagnostics_.Event("CutsceneWaitingForPlayers", detail);
                 }
+                if (!gathered && worldSettled && !missingSince_) missingSince_ = now;
+                if (!worldSettled) missingSince_ = 0;
             }
         }
         if (waiting && releaseName.empty() && !timedOut)
         {
             // Settling a gathered party is not waiting for another player.
             // Keep the anchor while readiness settles, without flashing UI.
-            if (worldSettled && present < total)
+            if (worldSettled && present < total && missingSince_ && now - missingSince_ >= MissingPromptDelayMilliseconds)
                 UpdateWaitPrompt(local, present, total);
             else
                 prompt_.Close();
@@ -326,8 +393,7 @@ namespace fable::multiplayer::world
         if (!releaseName.empty())
         {
             outboundPlays_.push_back({releaseName, localMap});
-            lastReleasedName_ = releaseName;
-            lastReleasedAt_ = now;
+            recentReleases_.push_back({releaseName, localMap, now, true});
             std::lock_guard<std::mutex> lock(holdMutex_);
             holdState_ = HoldState::Released;
             char detail[160] = {};
@@ -335,16 +401,18 @@ namespace fable::multiplayer::world
             diagnostics_.Event("CutsceneGatheredAndReleased", detail);
         }
 
+        while (!recentReleases_.empty() && (recentReleases_.size() > 64 || now - recentReleases_.front().receivedAt >= EchoWindowMilliseconds))
+            recentReleases_.pop_front();
         while (!outboundPlays_.empty())
         {
-            if (!SendPlay(outboundPlays_.front().name, outboundPlays_.front().mapId))
+            if (!SendPlay(outboundPlays_.front().name, outboundPlays_.front().mapId, outboundPlays_.front().skip))
             {
                 return !transport_->HasFailed();
             }
             char detail[160] = {};
             std::snprintf(detail, sizeof(detail), "name=%s map_id=%u",
                 outboundPlays_.front().name.c_str(), static_cast<unsigned>(outboundPlays_.front().mapId));
-            diagnostics_.Event("CutscenePlaySent", detail);
+            diagnostics_.Event(outboundPlays_.front().skip ? "CutsceneSkipSent" : "CutscenePlaySent", detail);
             outboundPlays_.pop_front();
         }
 
@@ -355,7 +423,9 @@ namespace fable::multiplayer::world
         for (PeerPlay& play : peerPlays_)
         {
             if (play.consumed) continue;
-            if (play.name == lastReleasedName_ && now - lastReleasedAt_ < EchoWindowMilliseconds)
+            const bool echo = std::any_of(recentReleases_.begin(), recentReleases_.end(), [&play, now](const auto& released)
+            { return released.name == play.name && released.mapId == play.mapId && now - released.receivedAt < EchoWindowMilliseconds; });
+            if (echo)
             {
                 char detail[160] = {};
                 std::snprintf(detail, sizeof(detail), "name=%s", play.name.c_str());
@@ -415,12 +485,13 @@ namespace fable::multiplayer::world
         if (!enabled_.load(std::memory_order_acquire)) return true;
         try
         {
-            peerPlays_.push_back({std::string(message.name, message.nameLength),
+            auto& pending = message.skip ? peerSkips_ : peerPlays_;
+            pending.push_back({std::string(message.name, message.nameLength),
                 message.mapId, GetTickCount64(), false});
             // The host fans a guest's cutscene out to every other guest.
             if (role_ == PeerRole::Host)
             {
-                outboundPlays_.push_back({std::string(message.name, message.nameLength), message.mapId});
+                outboundPlays_.push_back({std::string(message.name, message.nameLength), message.mapId, message.skip});
             }
         }
         catch (...)

@@ -52,6 +52,7 @@ namespace fable::automation::multiplayer::features
 
         void Enter(Phase phase, std::uint64_t now) noexcept;
         void Fail(const char* reason) noexcept;
+        bool ProcessSharedWorld() noexcept;
 
         ::fable::multiplayer::MultiplayerRuntimeGraph* multiplayer_ = nullptr;
         core::Diagnostics diagnostics_ = {};
@@ -60,5 +61,8 @@ namespace fable::automation::multiplayer::features
         unsigned smallAwards_ = 0;
         bool host_ = false;
         bool enabled_ = false;
+        bool sharedWorld_ = false;
+        unsigned sharedStep_ = 0;
+        std::uint64_t sharedStarted_ = 0, sharedNext_ = 0;
     };
 }

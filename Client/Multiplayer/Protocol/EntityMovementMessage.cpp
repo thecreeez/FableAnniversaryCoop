@@ -20,7 +20,8 @@ namespace
         float facing = 0.0f;
         float angularVelocity = 0.0f;
         std::uint8_t moving = 0;
-        std::uint8_t reserved[3] = {};
+        std::uint8_t combatFlags = 0;
+        std::uint8_t reserved[2] = {};
         char mapName[96] = {};
     };
 #pragma pack(pop)
@@ -32,7 +33,7 @@ namespace
         const fable::multiplayer::protocol::EntityMovementMessage& message)
         noexcept
     {
-        return message.entityUid != 0 && message.entityGeneration != 0 &&
+        return (message.combatFlags & ~7u) == 0 && message.entityUid != 0 && message.entityGeneration != 0 &&
             message.ownerActorId != 0 && message.mapEpoch != 0 &&
             message.sequence != 0 && !message.mapName.empty() &&
             message.mapName.size() < 96 &&
@@ -78,6 +79,7 @@ namespace fable::multiplayer::protocol
         wire.facing = message.facing;
         wire.angularVelocity = message.angularVelocity;
         wire.moving = message.moving ? 1 : 0;
+        wire.combatFlags = message.combatFlags;
         strncpy_s(wire.mapName, message.mapName.c_str(), _TRUNCATE);
         std::memcpy(destination, &wire, sizeof(wire));
         encodedSize = sizeof(wire);
@@ -97,8 +99,8 @@ namespace fable::multiplayer::protocol
         }
         WireEntityMovementMessage wire;
         std::memcpy(&wire, bytes, sizeof(wire));
-        if (wire.moving > 1 || wire.reserved[0] != 0 ||
-            wire.reserved[1] != 0 || wire.reserved[2] != 0 ||
+        if (wire.moving > 1 || (wire.combatFlags & ~7u) != 0 || wire.reserved[0] != 0 ||
+            wire.reserved[1] != 0 ||
             std::memchr(wire.mapName, '\0', sizeof(wire.mapName)) == nullptr)
         {
             return false;
@@ -117,6 +119,7 @@ namespace fable::multiplayer::protocol
         message.facing = wire.facing;
         message.angularVelocity = wire.angularVelocity;
         message.moving = wire.moving != 0;
+        message.combatFlags = wire.combatFlags;
         return IsSane(message);
     }
 }

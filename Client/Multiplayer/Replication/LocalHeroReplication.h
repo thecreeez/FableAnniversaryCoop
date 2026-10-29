@@ -82,6 +82,7 @@ namespace fable::multiplayer::replication
         bool TryBind();
         void CaptureMovement(std::uint64_t now);
         void CaptureAppearance(std::uint64_t now);
+        bool CaptureMorph(game::hero_pawn::appearance::HeroMorphState& state) const;
         void CaptureEquipment(std::uint64_t now);
         void MarkEquipmentTransition(
             std::uint64_t actionId,
@@ -94,6 +95,7 @@ namespace fable::multiplayer::replication
             const entities::LiveEntityRegistry& liveEntities) noexcept;
         [[nodiscard]] bool WorldIsCurrent() const;
         void BeginWorldTransition() noexcept;
+        void BeginCheckpointReload() noexcept;
         [[nodiscard]] bool ConsumeCompletedWorldTransition() noexcept;
         void Shutdown() noexcept;
 

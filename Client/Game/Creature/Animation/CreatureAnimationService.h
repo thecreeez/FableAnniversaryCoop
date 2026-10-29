@@ -23,6 +23,8 @@ namespace fable::game::creature::animation
             EntityService& entities,
             const core::Diagnostics& diagnostics);
         void Shutdown() noexcept;
+        void SetOwnerAttackRequest(const native::AnimationPlaybackRequest* request, int blendFrames, int options) noexcept;
+        bool PlayOwnerAttack(void* creature, const native::AnimationPlaybackRequest& request, int blendFrames, int options) noexcept;
         bool PlayAuthoritative(
             void* creature,
             std::uint32_t animationId,

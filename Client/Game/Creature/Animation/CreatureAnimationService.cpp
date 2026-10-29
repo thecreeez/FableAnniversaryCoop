@@ -43,6 +43,18 @@ namespace fable::game::creature::animation
         diagnostics_ = {};
     }
 
+    void CreatureAnimationService::SetOwnerAttackRequest(const native::AnimationPlaybackRequest* request,
+        int blendFrames, int options) noexcept
+    {
+        actionSelectionHook_.SetOwnerAttackRequest(request, blendFrames, options);
+    }
+
+    bool CreatureAnimationService::PlayOwnerAttack(void* creature, const native::AnimationPlaybackRequest& request,
+        int blendFrames, int options) noexcept
+    {
+        return functions_.PlayRequest(creature, request, blendFrames, options).result == native::AnimationPlaybackResult::Played;
+    }
+
     bool CreatureAnimationService::PlayAuthoritative(
         void* creature,
         std::uint32_t animationId,

@@ -15,6 +15,38 @@
 #include <Windows.h>
 
 #include <cstdio>
+#include <cstring>
+
+namespace
+{
+    bool DisableDistanceCulling(void* creature, HMODULE module) noexcept
+    {
+        fable::game::hero_pawn::appearance::native::HeroMorphResolutionState state;
+        if (!fable::game::hero_pawn::appearance::native::HeroMorphComponent::InspectResolution(creature, state) ||
+            !state.skeletalMeshComponent) return false;
+        const auto base = reinterpret_cast<std::uintptr_t>(module);
+        __try
+        {
+            // UPrimitiveComponent::PostEditChangeProperty RVA00356910 copies MaxDrawDistance
+            // +10C to CachedMaxDrawDistance+110 and tests bAllowCullDistanceVolume at+128 bit1.
+            // Native FComponentReattachContext ctor/dtor update the existing render scene proxy.
+            const unsigned char ctor[] = {0x56, 0x57, 0x8B, 0x7C, 0x24, 0x0C};
+            const unsigned char dtor[] = {0x56, 0x8B, 0xF1, 0x8B, 0x0E};
+            if (std::memcmp(reinterpret_cast<void*>(base + 0x003F4AF0), ctor, sizeof(ctor)) ||
+                std::memcmp(reinterpret_cast<void*>(base + 0x003F4550), dtor, sizeof(dtor))) return false;
+            auto* mesh = static_cast<unsigned char*>(state.skeletalMeshComponent);
+            auto* maximum = reinterpret_cast<float*>(mesh + 0x10C);
+            auto* cached = reinterpret_cast<float*>(mesh + 0x110);
+            if (*maximum == 0 && *cached == 0 && !(mesh[0x128] & 2)) return true;
+            void* reattach[2] = {};
+            reinterpret_cast<void(__thiscall*)(void*, void*)>(base + 0x003F4AF0)(reattach, mesh);
+            *maximum = 0; *cached = 0; mesh[0x128] &= ~2u;
+            reinterpret_cast<void(__thiscall*)(void*)>(base + 0x003F4550)(reattach);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+}
 
 namespace fable::game::hero_pawn::remote
 {
@@ -22,7 +54,7 @@ namespace fable::game::hero_pawn::remote
     {
         Retire();
         owner_.nextSpawnAttemptAt_ = GetTickCount64() + 5'000;
-        owner_.definitionArmToken_ = owner_.definitionHook_->Arm();
+        owner_.definitionArmToken_ = owner_.definitionHook_->Arm(state.heroMorph.childhood);
         if (owner_.definitionArmToken_ == 0)
         {
             owner_.diagnostics_.Event(
@@ -96,6 +128,7 @@ namespace fable::game::hero_pawn::remote
         }
         owner_.playerId_ = state.playerId;
         owner_.appearanceDefinition_ = state.appearanceDefinition;
+        owner_.childhood_ = state.heroMorph.childhood;
         // Keep distance/visibility culling from removing a live remote Hero.
         // World departure explicitly retires this native body through the
         // game's destruction path; persistence is not cross-world reuse.
@@ -251,8 +284,12 @@ namespace fable::game::hero_pawn::remote
         const bool attackable = owner_.avatar_->SetAttackable(true);
         const bool damageable = owner_.avatar_->SetDamageable(true);
         const bool friendly = owner_.avatar_->SetFriendsWithEverything(false);
-        const bool collidable = owner_.avatar_->SetCollidable(false);
+        // This flag controls world collision as well as creature contact.
+        // Clearing it lets native attack/root motion pass through the floor.
+        const bool collidable = owner_.avatar_->SetCollidable(true);
         const bool drawable = owner_.avatar_->SetDrawable(!owner_.cutsceneHidden_ && owner_.appearanceBaselineApplied_ && owner_.IsLifecycleActive());
+        const bool distanceCulling = DisableDistanceCulling(owner_.nativeAvatar_, owner_.entities_->GameModule());
+        (void)distanceCulling; // Initial graphic may still be constructing; periodic repair resolves it again.
         owner_.lastPresentationRepairAt_ = 0;
 
         if (unload && persistent && attackable && damageable && friendly &&
@@ -299,9 +336,10 @@ namespace fable::game::hero_pawn::remote
                     owner_.avatar_->SetPersistent(true);
                 const bool drawableRepaired =
                     owner_.avatar_->SetDrawable(!owner_.cutsceneHidden_ && owner_.appearanceBaselineApplied_ && owner_.IsLifecycleActive());
-                const bool collisionRepaired = owner_.avatar_->SetCollidable(false);
+                const bool collisionRepaired = owner_.avatar_->SetCollidable(true);
+                const bool distanceRepaired = DisableDistanceCulling(owner_.nativeAvatar_, owner_.entities_->GameModule());
                 const bool repaired = unloadPolicyRepaired &&
-                    persistenceRepaired && drawableRepaired && collisionRepaired;
+                    persistenceRepaired && drawableRepaired && collisionRepaired && distanceRepaired;
                 if (!repaired &&
                     !owner_.presentationRepairFailureReported_)
                 {

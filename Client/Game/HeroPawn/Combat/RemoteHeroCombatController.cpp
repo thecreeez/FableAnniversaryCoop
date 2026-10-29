@@ -13,6 +13,27 @@
 #include <Windows.h>
 
 #include <cstdio>
+#include <cmath>
+
+namespace
+{
+    bool OffsetAlongNativeForward(void* physics, fable::game::Vector3& point) noexcept
+    {
+        __try
+        {
+            // CTCPhysicsControlled::vf72 (01A79A00) returns forward at +5C.
+            // Navigator shares this implementation and transform layout.
+            const auto* bytes = static_cast<const unsigned char*>(physics);
+            const float x = *reinterpret_cast<const float*>(bytes + 0x5C);
+            const float y = *reinterpret_cast<const float*>(bytes + 0x60);
+            const float length = std::sqrt(x * x + y * y);
+            if (!std::isfinite(length) || length < 0.001f) return false;
+            point.x += x / length; point.y += y / length;
+            return true;
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+}
 
 namespace fable::game::hero_pawn::combat
 {
@@ -238,9 +259,9 @@ namespace fable::game::hero_pawn::combat
                 }
                 // Untargeted retail Hero attacks take a world aim point. A
                 // missing semantic target should not block the owner-observed
-                // swing; use a stable nearby point and retain the replicated
-                // pawn yaw already driven by locomotion.
-                aim.physicsPosition.y += 1.0f;
+                // swing; aim along the replicated pawn's native forward, not
+                // world north (which made every untargeted attack auto-turn).
+                if (!OffsetAlongNativeForward(aim.physicsNavigator, aim.physicsPosition)) return false;
             }
             const float targetPosition[3] = {
                 aim.physicsPosition.x,

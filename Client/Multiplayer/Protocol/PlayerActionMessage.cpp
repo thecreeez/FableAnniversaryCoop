@@ -37,6 +37,9 @@ namespace
         std::uint64_t targetPlayerActorId = 0;
         std::uint64_t targetThingUid = 0;
         float motion[5] = {};
+        std::uint8_t hasNativeAnimation = 0;
+        fable::game::creature::animation::native::AnimationPlaybackRequest nativeAnimation;
+        std::int32_t nativeBlendFrames = 0, nativeAnimationOptions = 0;
         char mapName[96] = {};
         char semanticName[128] = {};
         char resolvedActionType[128] = {};
@@ -44,7 +47,7 @@ namespace
 #pragma pack(pop)
 
     static_assert(std::is_trivially_copyable_v<WirePlayerActionMessage>);
-    static_assert(sizeof(WirePlayerActionMessage) == 472);
+    static_assert(sizeof(WirePlayerActionMessage) == 525);
     static_assert(
         sizeof(WirePlayerActionMessage) <=
             fable::multiplayer::protocol::MaximumReliableMessageBytes);
@@ -64,6 +67,20 @@ namespace
     {
         using namespace fable::multiplayer::protocol;
         using fable::game::creature::equipment::CreatureWeaponFamily;
+        const auto& animation = message.nativeAnimation;
+        const bool validNativeAnimation = !message.hasNativeAnimation ||
+            (message.kind == PlayerActionKind::AbilityRequest && message.weaponFamily != CreatureWeaponFamily::Ranged &&
+             animation.animationId > 0 && animation.animationId <= 0xFFFF &&
+             static_cast<std::uint32_t>(animation.animationId) == message.resolvedAnimationId &&
+             animation.channel >= 0 && animation.channel <= 255 && animation.immediate <= 1 && !animation.reserved &&
+             animation.priority >= 0 && animation.priority <= 1000 && animation.variant >= -1 && animation.variant <= 1000000 &&
+             std::isfinite(animation.playbackRate) && animation.playbackRate > 0 && animation.playbackRate <= 10 &&
+             std::isfinite(animation.blendIn) && animation.blendIn >= 0 && animation.blendIn <= 1000 &&
+             std::isfinite(animation.blendOut) && animation.blendOut >= 0 && animation.blendOut <= 1000 &&
+             std::isfinite(animation.startTime) && std::fabs(animation.startTime) <= 100000 &&
+             std::isfinite(animation.endTime) && std::fabs(animation.endTime) <= 100000 &&
+             message.nativeBlendFrames >= -1 && message.nativeBlendFrames <= 1000 && message.nativeAnimationOptions >= -1 && message.nativeAnimationOptions <= 0xFFFF);
+        if (!validNativeAnimation) return false;
         const bool saneFamily =
             message.weaponFamily == CreatureWeaponFamily::None ||
             message.weaponFamily == CreatureWeaponFamily::Melee ||
@@ -114,7 +131,7 @@ namespace
         const bool saneUnarmedAttack =
             !(ability && message.abilityId == kHeroAttackAbilityId &&
                 message.weaponFamily == CreatureWeaponFamily::None) ||
-            message.resolvedActionType.find(
+            message.hasNativeAnimation || message.resolvedActionType.find(
                 "InterruptableMidAttackAutoTurn") != std::string::npos;
         const auto saneAttachment = [](std::int32_t definitionIndex,
                                        std::uint32_t attachmentSlot)
@@ -202,6 +219,9 @@ namespace fable::multiplayer::protocol
             return false;
         }
         WirePlayerActionMessage wire;
+        wire.hasNativeAnimation = message.hasNativeAnimation ? 1 : 0;
+        wire.nativeAnimation = message.nativeAnimation; wire.nativeBlendFrames = message.nativeBlendFrames;
+        wire.nativeAnimationOptions = message.nativeAnimationOptions;
         wire.phase = static_cast<std::uint8_t>(message.phase);
         wire.kind = static_cast<std::uint8_t>(message.kind);
         wire.weaponFamily = static_cast<std::uint8_t>(message.weaponFamily);
@@ -261,6 +281,10 @@ namespace fable::multiplayer::protocol
         {
             return false;
         }
+        if (wire.hasNativeAnimation > 1) return false;
+        message.hasNativeAnimation = wire.hasNativeAnimation != 0;
+        message.nativeAnimation = wire.nativeAnimation; message.nativeBlendFrames = wire.nativeBlendFrames;
+        message.nativeAnimationOptions = wire.nativeAnimationOptions;
         message.phase = static_cast<PlayerActionPhase>(wire.phase);
         message.kind = static_cast<PlayerActionKind>(wire.kind);
         message.weaponFamily = static_cast<

@@ -21,9 +21,11 @@ namespace fable::launcher::multiplayer
             peers.WaitEvent(host, "MultiplayerQuestLifecycleHookReady") &&
             peers.WaitEvent(guest, "MultiplayerQuestLifecycleHookReady");
         const bool hostToGuest = connected &&
+            peers.WaitEvent(guest, "QuestSyncMenuOpened") &&
             peers.WaitEvent(host, "QuestSyncHostActivated") &&
             peers.WaitEventDetail(host, "MultiplayerQuestEventSent", "op=activate") &&
             peers.WaitEventDetail(guest, "MultiplayerQuestEventApplied", "op=activate") &&
+            peers.WaitEvent(guest, "MultiplayerOpenQuestMenuRefreshed") &&
             peers.WaitEvent(guest, "QuestSyncGuestObservedActive");
         const bool guestToHost = hostToGuest &&
             peers.WaitEvent(guest, "QuestSyncGuestCompleted") &&
@@ -51,21 +53,26 @@ namespace fable::launcher::multiplayer
         // peer must be written on the other, in both directions.
         const bool fieldsShared = outcomesMatch &&
             peers.WaitEvent(host, "QuestFieldHostWrote") &&
-            peers.WaitEventDetail(guest, "MultiplayerQuestFieldApplied", "field=WillEnergyWarningsGiven") &&
+            peers.WaitEventDetail(guest, "MultiplayerQuestFieldApplied", "field=ArcheryHighScore") &&
             peers.WaitEvent(guest, "QuestFieldGuestObserved") &&
             peers.WaitEvent(guest, "QuestFieldGuestWrote") &&
-            peers.WaitEventDetail(host, "MultiplayerQuestFieldApplied", "field=SaveWarningsGiven") &&
+            peers.WaitEventDetail(host, "MultiplayerQuestFieldApplied", "field=ArcheryHighScore") &&
             peers.WaitEvent(host, "QuestFieldHostObserved");
         // World consequences: a master-quest world flag set by the host must
         // be written on the guest.
         const bool worldFlagsShared = fieldsShared &&
             peers.WaitEvent(host, "WorldFlagHostWrote") &&
             peers.WaitEventDetail(guest, "MultiplayerQuestFieldApplied", "field=ArcheryHighScore") &&
-            peers.WaitEvent(guest, "WorldFlagGuestObserved");
-        const bool responsive = worldFlagsShared &&
+            peers.WaitEvent(guest, "WorldFlagGuestObserved") &&
+            peers.WaitEvent(guest, "QuestSyncGuestCardAccepted") &&
+            peers.WaitEvent(host, "MultiplayerQuestCardAccepted");
+        const bool clockShared = worldFlagsShared &&
+            peers.WaitEvent(guest, "WorldClockGuestWorldPauseObserved") &&
+            peers.WaitEvent(guest, "WorldClockGuestAcceptancePassed");
+        const bool responsive = clockShared &&
             peers.IsResponsive(host) && peers.IsResponsive(guest);
         const bool stopped = session.Shutdown();
-        if (!connected || !hostToGuest || !guestToHost || !echoInert || !outcomesMatch || !fieldsShared || !worldFlagsShared || !responsive || !stopped)
+        if (!connected || !hostToGuest || !guestToHost || !echoInert || !outcomesMatch || !fieldsShared || !worldFlagsShared || !clockShared || !responsive || !stopped)
         {
             std::wcerr
                 << L"Multiplayer quest acceptance failed: "
@@ -76,6 +83,7 @@ namespace fable::launcher::multiplayer
                     : !outcomesMatch ? L"host and guest disagree on the finished quest's completed state"
                     : !fieldsShared ? L"a quest progress field changed on one peer did not reach the other"
                     : !worldFlagsShared ? L"a world flag set on the host did not reach the guest"
+                    : !clockShared ? L"native world clock did not converge across time changes, sleep, midnight and pause"
                     : !responsive ? L"a peer stopped responding"
                     : L"shutdown was not clean")
                 << L".\nState root: " << session.context().sessionRoot.wstring() << L"\n";

@@ -1,4 +1,5 @@
 #include "QuestStateNativeCaptureHook.h"
+#include "Game/Persistence/CheckpointLoadScope.h"
 
 #include "Game/Native/Addresses.h"
 #include "Game/Native/ScriptTypes.h"
@@ -442,7 +443,7 @@ namespace fable::multiplayer::persistence
         }
         const std::uint8_t* bytes = nullptr;
         std::size_t byteCount = 0;
-        const bool hasOverride = snapshotProvider_ != nullptr &&
+        const bool hasOverride = !game::persistence::pairedCheckpointLoad.load(std::memory_order_acquire) && snapshotProvider_ != nullptr &&
             snapshotProvider_(loadContext_, bytes, byteCount);
         if (!hasOverride)
         {

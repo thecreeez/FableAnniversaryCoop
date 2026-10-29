@@ -988,14 +988,15 @@ namespace fable::game::creature::actions
         void* action,
         const char* actionType) noexcept
     {
-        // CCreatureAction_InterruptableMidAttack and its concrete variants
+        // CCreatureAction_InterruptableMidAttack / InterruptableNearAttack
         // derive from the verified attack base constructed at retail RVA
         // 0x017A70E0. That base owns its target as a weak pointer at +0xB4.
         // Resolve it through Fable's weak getter so no object memory or raw
         // address is ever serialized.
         if (gameModule == nullptr || action == nullptr ||
             actionType == nullptr ||
-            std::strstr(actionType, "InterruptableMidAttack") == nullptr)
+            (std::strstr(actionType, "InterruptableMidAttack") == nullptr &&
+             std::strstr(actionType, "InterruptableNearAttack") == nullptr))
         {
             return nullptr;
         }

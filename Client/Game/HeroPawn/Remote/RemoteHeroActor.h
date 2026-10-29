@@ -225,6 +225,7 @@ namespace fable::game::hero_pawn::remote
         game::ScriptControl* control_ = nullptr;
         std::string playerId_;
         std::string appearanceDefinition_;
+        bool childhood_ = false;
         std::uint64_t actorId_ = 0;
         std::uint64_t nextSpawnAttemptAt_ = 0;
         bool cutsceneHidden_ = false;

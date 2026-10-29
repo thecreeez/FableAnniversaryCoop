@@ -56,6 +56,7 @@ namespace fable::automation::multiplayer::quest
 
         void Fail(const char* reason) noexcept;
         void Enter(Phase phase, std::uint64_t now) noexcept;
+        void CheckWorldClock(std::uint64_t now) noexcept;
 
         ::fable::multiplayer::MultiplayerRuntimeGraph* multiplayer_ = nullptr;
         core::Diagnostics diagnostics_ = {};
@@ -71,5 +72,14 @@ namespace fable::automation::multiplayer::quest
         std::uint64_t lastProbeAt_ = 0;
         bool host_ = false;
         bool enabled_ = false;
+        std::uint64_t clockStartedAt_ = 0;
+        unsigned int clockStage_ = 0, clockObserved_ = 0;
+        std::uint64_t clockFrozenAt_ = 0;
+        std::uint64_t clockDrivenAt_ = 0;
+        float savedClockFraction_ = 0, savedClockRate_ = 0;
+        int savedClockDay_ = 0;
+        std::uint64_t clockPausedAt_ = 0;
+        float clockPausedFraction_ = 0;
+        bool clockPauseObserved_ = false;
     };
 }

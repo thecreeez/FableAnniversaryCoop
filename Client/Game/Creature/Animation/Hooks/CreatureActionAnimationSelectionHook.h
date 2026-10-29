@@ -26,6 +26,17 @@ namespace fable::game::creature::animation
     {
     public:
         static constexpr std::size_t ActionTypeCapacity = 128;
+        struct OwnerAttackFrame final
+        {
+            void* creature = nullptr;
+            void* action = nullptr;
+            std::uint64_t observedAt = 0;
+            native::AnimationPlaybackRequest request;
+            int blendFrames = 0, options = 0;
+            char actionType[128] = {};
+        };
+        static void WatchLocalHero(void* hero) noexcept;
+        static bool PopOwnerAttack(OwnerAttackFrame&) noexcept;
 
         bool Install(
             HMODULE gameModule,
@@ -37,6 +48,7 @@ namespace fable::game::creature::animation
             const char* actionType,
             std::uint32_t animationId) noexcept;
         void EndSelection() noexcept;
+        static void SetOwnerAttackRequest(const native::AnimationPlaybackRequest* request, int blendFrames, int options) noexcept;
         bool AttachActionLifecycleObserver(
             actions::CreatureActionLifecycleObserver& observer) noexcept;
         void DetachActionLifecycleObserver() noexcept;
@@ -62,6 +74,9 @@ namespace fable::game::creature::animation
             std::uint32_t animationId = 0;
             std::uint32_t observedAnimationId = 0;
             bool applied = false;
+            bool hasOwnerRequest = false;
+            native::AnimationPlaybackRequest ownerRequest;
+            int blendFrames = 0, options = 0;
             std::array<char, ActionTypeCapacity> actionType = {};
         };
 
@@ -86,12 +101,23 @@ namespace fable::game::creature::animation
         bool TryApplySelection(
             void* animationState,
             const native::AnimationPlaybackRequest& request,
-            native::AnimationPlaybackRequest& replacement) noexcept;
+            native::AnimationPlaybackRequest& replacement, int& blendFrames, int& options) noexcept;
         void ReportExpiredSelections(std::uint64_t now) noexcept;
         void ReportSelection(const Selection& selection) const noexcept;
 
+        void CaptureOwnerAttack(void* state, const native::AnimationPlaybackRequest&, int blendFrames, int options) noexcept;
+        SRWLOCK ownerCaptureLock_ = SRWLOCK_INIT;
+        void* watchedHero_ = nullptr;
+        void* watchedState_ = nullptr;
+        std::array<OwnerAttackFrame, 64> ownerFrames_{};
+        std::size_t ownerFirst_ = 0, ownerCount_ = 0;
+        void* lastOwnerAction_ = nullptr;
+        int lastOwnerAnimation_ = 0;
+        std::uint64_t lastOwnerAt_ = 0;
         static CreatureActionAnimationSelectionHook* active_;
         static thread_local std::uint64_t scopedSelectionToken_;
+        static thread_local const native::AnimationPlaybackRequest* ownerRequest_;
+        static thread_local int ownerBlendFrames_, ownerOptions_;
 
         HMODULE gameModule_ = nullptr;
         core::hooking::InlineHook submitHook_;

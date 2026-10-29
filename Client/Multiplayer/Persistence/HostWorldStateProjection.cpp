@@ -1,4 +1,5 @@
 #include "HostWorldStateProjection.h"
+#include "Game/Persistence/CheckpointLoadScope.h"
 
 #include "Game/Entity/Persistence/Hooks/ThingSaveProjectionHook.h"
 #include "Multiplayer/Entities/EntityLifecycleReplication.h"
@@ -146,6 +147,7 @@ namespace fable::multiplayer::persistence
         const char* scriptName,
         std::uint16_t& mapId) noexcept
     {
+        if (game::persistence::pairedCheckpointLoad.load(std::memory_order_acquire)) return false;
         try
         {
             auto* const projection = static_cast<HostWorldStateProjection*>(

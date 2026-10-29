@@ -39,6 +39,7 @@ namespace fable::multiplayer::protocol
         std::memcpy(destination, &message.revision, sizeof(message.revision));
         std::memcpy(destination + 8, &message.mapId, sizeof(message.mapId));
         destination[10] = message.nameLength;
+        destination[11] = message.skip ? 1 : 0;
         std::memcpy(destination + CutsceneFixedBytes, message.name, message.nameLength);
         encodedSize = total;
         return true;
@@ -54,6 +55,8 @@ namespace fable::multiplayer::protocol
         std::memcpy(&message.revision, bytes, sizeof(message.revision));
         std::memcpy(&message.mapId, bytes + 8, sizeof(message.mapId));
         message.nameLength = bytes[10];
+        if (bytes[11] > 1) return false;
+        message.skip = bytes[11] != 0;
         if (message.nameLength >= MaximumCutsceneNameBytes ||
             byteCount != CutsceneFixedBytes + message.nameLength)
         {

@@ -169,6 +169,14 @@
     <Filter Include="UI\Runtime"><UniqueIdentifier>{4E13EE90-1D68-469C-8F52-66F64DDC8D0B}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Multiplayer\Protocol\WorldClockMessage.cpp"><Filter>Multiplayer\Protocol</Filter></ClCompile>
+    <ClCompile Include="Multiplayer\World\WorldClockSyncService.cpp"><Filter>Multiplayer\World</Filter></ClCompile>
+    <ClCompile Include="Multiplayer\World\WeatherSyncService.cpp"><Filter>Multiplayer\World</Filter></ClCompile>
+    <ClCompile Include="Multiplayer\Presentation\EffectSyncService.cpp"><Filter>Multiplayer\Presentation</Filter></ClCompile>
+    <ClCompile Include="Multiplayer\Protocol\EffectMessage.cpp"><Filter>Multiplayer\Protocol</Filter></ClCompile>
+    <ClCompile Include="Multiplayer\Protocol\WeatherMessage.cpp"><Filter>Multiplayer\Protocol</Filter></ClCompile>
+    <ClCompile Include="Multiplayer\World\DestructibleSyncService.cpp"><Filter>Multiplayer\World</Filter></ClCompile>
+    <ClCompile Include="Multiplayer\Persistence\SessionCheckpointService.cpp"><Filter>Multiplayer\Persistence</Filter></ClCompile>
     <ClCompile Include="DeveloperTools\DeveloperToolTypes.cpp"><Filter>DeveloperTools</Filter></ClCompile>
     <ClCompile Include="DeveloperTools\DeveloperCommandQueue.cpp"><Filter>DeveloperTools</Filter></ClCompile>
     <ClCompile Include="DeveloperTools\DeveloperToolBackend.cpp"><Filter>DeveloperTools</Filter></ClCompile>
@@ -456,6 +464,15 @@
     <ClCompile Include="UI\Runtime\GameWindowRuntime.cpp"><Filter>UI\Runtime</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Multiplayer\Protocol\WorldClockMessage.h"><Filter>Multiplayer\Protocol</Filter></ClInclude>
+    <ClInclude Include="Multiplayer\World\WorldClockSyncService.h"><Filter>Multiplayer\World</Filter></ClInclude>
+    <ClInclude Include="Multiplayer\World\WeatherSyncService.h"><Filter>Multiplayer\World</Filter></ClInclude>
+    <ClInclude Include="Multiplayer\Presentation\EffectSyncService.h"><Filter>Multiplayer\Presentation</Filter></ClInclude>
+    <ClInclude Include="Multiplayer\Protocol\EffectMessage.h"><Filter>Multiplayer\Protocol</Filter></ClInclude>
+    <ClInclude Include="Multiplayer\Protocol\WeatherMessage.h"><Filter>Multiplayer\Protocol</Filter></ClInclude>
+    <ClInclude Include="Multiplayer\World\DestructibleSyncService.h"><Filter>Multiplayer\World</Filter></ClInclude>
+    <ClInclude Include="Multiplayer\Persistence\SessionCheckpointService.h"><Filter>Multiplayer\Persistence</Filter></ClInclude>
+    <ClInclude Include="Game\Persistence\CheckpointLoadScope.h"><Filter>Game\Persistence</Filter></ClInclude>
     <ClInclude Include="DeveloperTools\DeveloperToolTypes.h"><Filter>DeveloperTools</Filter></ClInclude>
     <ClInclude Include="DeveloperTools\DeveloperCommandQueue.h"><Filter>DeveloperTools</Filter></ClInclude>
     <ClInclude Include="DeveloperTools\DeveloperToolBackend.h"><Filter>DeveloperTools</Filter></ClInclude>
@@ -503,6 +520,7 @@
     <ClInclude Include="Game\Creature\Actions\CreatureActionLifecycleEvent.h"><Filter>Game\Creature\Actions</Filter></ClInclude>
     <ClInclude Include="Game\Creature\Actions\Native\CreatureActionFunctions.h"><Filter>Game\Creature\Actions\Native</Filter></ClInclude>
     <ClInclude Include="Game\Creature\Animation\CreatureAnimationService.h"><Filter>Game\Creature\Animation</Filter></ClInclude>
+    <ClInclude Include="Game\Creature\Animation\AnimationPlaybackRequest.h" />
     <ClInclude Include="Game\Creature\Animation\Native\AnimationPlaybackFunctions.h"><Filter>Game\Creature\Animation\Native</Filter></ClInclude>
     <ClInclude Include="Game\Creature\Animation\Hooks\CreatureActionAnimationSelectionHook.h"><Filter>Game\Creature\Animation\Hooks</Filter></ClInclude>
     <ClInclude Include="Game\Creature\Combat\Bindings\CreatureCombatBindings.h"><Filter>Game\Creature\Combat\Bindings</Filter></ClInclude>

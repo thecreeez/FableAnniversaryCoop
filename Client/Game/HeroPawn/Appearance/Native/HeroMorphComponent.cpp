@@ -326,6 +326,10 @@ namespace
                     result.skeletalMesh,
                     controllerName.index,
                     controllerName.number);
+            // A loaded child/non-morphing mesh can have a valid AnimTree and
+            // skeleton without an adult MassBoneScaling control. It represents
+            // an empty scale set, not an unfinished world load.
+            if (result.massBoneScaling == nullptr) return true;
             if (!IsReadableRange(
                     result.massBoneScaling,
                     kMassScalingCountOffset + sizeof(std::int32_t)))

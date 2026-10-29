@@ -1,4 +1,5 @@
 #include "WorldSectionPersistenceHook.h"
+#include "Game/Persistence/CheckpointLoadScope.h"
 
 #include <array>
 #include <cstdio>
@@ -544,6 +545,11 @@ namespace fable::game::persistence
         const bool matchingDispatcher = base != 0 &&
             reinterpret_cast<std::uintptr_t>(returnAddress) ==
                 base + expectedReturnRva;
+        if (pairedCheckpointLoad.load(std::memory_order_acquire) && snapshotProvider_ != nullptr)
+        {
+            original(manager, persistContext);
+            return;
+        }
         const bool exactSectionCall = matchingDispatcher &&
             ValidateGuestContext(persistContext, base);
         if (matchingDispatcher && !exactSectionCall &&

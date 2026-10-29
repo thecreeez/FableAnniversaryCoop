@@ -32,6 +32,12 @@ namespace fable::multiplayer::protocol
         return kind != EntityActionKind::Trade;
     }
 
+    inline bool UsesSimulationActionAuthority(EntityActionKind kind, const std::string& semanticName) noexcept
+    {
+        return kind == EntityActionKind::Native || kind == EntityActionKind::Movement ||
+            (kind == EntityActionKind::Combat && semanticName != "PlayerAttackEngagement");
+    }
+
     enum class EntityActionOutcome : std::uint8_t
     {
         None = 0,

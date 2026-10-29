@@ -65,6 +65,79 @@ namespace fable::game::cutscene
     CutsceneObserver* CutsceneObserver::active_ = nullptr;
     thread_local bool CutsceneObserver::replaying_ = false;
 
+    void CutsceneObserver::SetActiveName(const char* name) noexcept
+    {
+        AcquireSRWLockExclusive(&skipLock_);
+        strncpy_s(activeName_, name, _TRUNCATE);
+        skipRequested_ = false;
+        broadcastSkip_ = false;
+        ReleaseSRWLockExclusive(&skipLock_);
+    }
+
+    bool CutsceneObserver::PopSkip(std::string& name)
+    {
+        char copy[96] = {};
+        AcquireSRWLockExclusive(&skipLock_);
+        std::memcpy(copy, localSkip_, sizeof(copy));
+        localSkip_[0] = 0;
+        ReleaseSRWLockExclusive(&skipLock_);
+        if (copy[0] == 0) return false;
+        name = copy;
+        return true;
+    }
+
+    bool CutsceneObserver::RequestSkip(const char* name, bool broadcast) noexcept
+    {
+        AcquireSRWLockExclusive(&skipLock_);
+        const bool matches = name != nullptr && activeName_[0] != 0 && std::strcmp(name, activeName_) == 0;
+        if (matches) { skipRequested_ = true; broadcastSkip_ = broadcast; }
+        ReleaseSRWLockExclusive(&skipLock_);
+        return matches;
+    }
+
+    void __fastcall CutsceneObserver::InputObserved(void* self, void*, void* input, void* messages)
+    {
+        auto* observer = active_;
+        if (observer == nullptr || observer->originalInput_ == nullptr) return;
+        observer->originalInput_(self, input, messages);
+        if (messages == nullptr) return;
+        bool requested = false, broadcast = false;
+        char name[96] = {};
+        AcquireSRWLockExclusive(&observer->skipLock_);
+        requested = observer->skipRequested_;
+        broadcast = observer->broadcastSkip_;
+        observer->skipRequested_ = false;
+        observer->broadcastSkip_ = false;
+        std::memcpy(name, observer->activeName_, sizeof(name));
+        ReleaseSRWLockExclusive(&observer->skipLock_);
+        if (name[0] == 0) return;
+        const auto base = reinterpret_cast<std::uintptr_t>(observer->gameModule_);
+        bool skipped = false;
+        __try
+        {
+            auto* queue = static_cast<unsigned char*>(messages);
+            for (unsigned i = 0; i < queue[0xA8] && i < 4; ++i)
+                if (*reinterpret_cast<unsigned*>(queue + 8 + i * 0x28) == 0x39) skipped = true;
+            if (requested && !skipped)
+            {
+                unsigned char event[0x28] = {};
+                *reinterpret_cast<unsigned*>(event) = 0x39;
+                event[4] = 0xFF;
+                event[0x26] = 1;
+                reinterpret_cast<void(__thiscall*)(void*)>(base + 0x012E69C0)(messages);
+                reinterpret_cast<void(__thiscall*)(void*, void*)>(base + 0x012E6950)(messages, event);
+                skipped = true;
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+        if (skipped && (!requested || broadcast))
+        {
+            AcquireSRWLockExclusive(&observer->skipLock_);
+            std::memcpy(observer->localSkip_, name, sizeof(name));
+            ReleaseSRWLockExclusive(&observer->skipLock_);
+        }
+    }
+
     void CutsceneObserver::SetGate(const Gate gate, void* const context) noexcept
     {
         gateContext_.store(context, std::memory_order_release);
@@ -97,6 +170,18 @@ namespace fable::game::cutscene
             return false;
         }
         originalStart_ = reinterpret_cast<StartFn>(start_.Original());
+        unsigned char inputPrefix[8] = {0x83, 0xEC, 0x38, 0xA1};
+        const auto cookie = reinterpret_cast<std::uintptr_t>(gameModule) + 0x0303E010;
+        std::memcpy(inputPrefix + 4, &cookie, 4);
+        if (!skipInput_.Install(reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(gameModule) + 0x018C1580),
+            inputPrefix, sizeof(inputPrefix), reinterpret_cast<void*>(&InputObserved), sizeof(inputPrefix)))
+        {
+            diagnostics_.Event("CutsceneSkipHookBlocked", "native cutscene input prologue mismatch");
+            Shutdown();
+            return false;
+        }
+        originalInput_ = reinterpret_cast<InputFn>(skipInput_.Original());
+        diagnostics_.Event("CutsceneSkipHookReady", "retail cutscene input event39 observed and replayable");
         diagnostics_.Event("CutsceneObserverReady", "scripted cutscene starts and the HUD cutscene flag are observed");
         return true;
 #endif
@@ -104,12 +189,13 @@ namespace fable::game::cutscene
 
     void CutsceneObserver::Shutdown() noexcept
     {
-        if (!start_.Shutdown())
+        if (!skipInput_.Shutdown() || !start_.Shutdown())
         {
             diagnostics_.Log("Hook: cutscene observer shutdown deferred because the target is owned by another hook.");
             return;
         }
         originalStart_ = nullptr;
+        originalInput_ = nullptr;
         gameModule_ = nullptr;
         diagnostics_ = {};
         inCutscene_ = false;
@@ -141,7 +227,9 @@ namespace fable::game::cutscene
             ordinal, cutscene, GetCurrentThreadId(), a2, a3, a4, a5, a6);
         self->diagnostics_.Event("CutsceneStartRequested", detail);
         const std::uint64_t startedAt = GetTickCount64();
+        self->SetActiveName(cutscene);
         const std::uintptr_t result = self->originalStart_(name, a2, a3, a4, a5, a6);
+        self->SetActiveName("");
         std::snprintf(detail, sizeof(detail),
             "ordinal=%u name=%s result=%p blocked_ms=%llu",
             ordinal, cutscene, reinterpret_cast<void*>(result),
@@ -232,7 +320,9 @@ namespace fable::game::cutscene
             modeEntered = true;
             construct(&cutscene, name, -1);
             nameBuilt = true;
+            SetActiveName(name);
             originalStart_(&cutscene, movie, 0, 0, 0, 1);
+            SetActiveName("");
             played = true;
         }
         __except (faultCode = GetExceptionCode(), EXCEPTION_EXECUTE_HANDLER)
@@ -253,6 +343,7 @@ namespace fable::game::cutscene
         {
         }
         replaying_ = false;
+        SetActiveName("");
         if (!played)
         {
             char detail[128] = {};

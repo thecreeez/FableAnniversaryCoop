@@ -49,6 +49,7 @@ namespace fable::multiplayer::persistence
 
         // Game thread only.
         bool Process();
+        void ResetForReload() noexcept;
         bool HandleReliableMessage(const TransportMessage& message) override;
 
         [[nodiscard]] bool IsActive() const noexcept { return enabled_; }

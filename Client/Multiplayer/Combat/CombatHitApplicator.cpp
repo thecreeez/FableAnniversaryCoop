@@ -12,6 +12,28 @@
 #include "Multiplayer/Replication/RemotePlayerChannels.h"
 
 #include <cstdio>
+#include <cmath>
+
+namespace
+{
+    bool CurrentHitPosition(void* target, float (&position)[3]) noexcept
+    {
+        __try
+        {
+            // CThing's direct physics component; both controlled and navigator
+            // expose world position at +0C. Never invent a hit at world origin.
+            auto* physics = *reinterpret_cast<unsigned char**>(static_cast<unsigned char*>(target) + 0x6C);
+            if (!physics) return false;
+            for (unsigned int i = 0; i < 3; ++i)
+            {
+                position[i] = *reinterpret_cast<float*>(physics + 0xC + i * sizeof(float));
+                if (!std::isfinite(position[i])) return false;
+            }
+            return true;
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+}
 
 namespace fable::multiplayer::combat
 {
@@ -167,6 +189,7 @@ namespace fable::multiplayer::combat
     void CombatHitApplicator::ClearNativeHitObservations() noexcept
     {
         nativeObservations_.Clear();
+        healthRevisions_.Clear();
     }
 
     void* CombatHitApplicator::ResolveSource(
@@ -334,9 +357,12 @@ namespace fable::multiplayer::combat
             (!terminalWorldEntity || !terminalProgress.healthHandled))
         {
             const float damage = result.healthBefore - result.healthAfter;
-            if (!combat_->ApplyOwnedCombatDamage(target, damage) ||
-                !combat_->ReadCombatHealth(
-                    target, effectiveHealth, effectiveMaximum))
+            if (healthRevisions_.CanApply(result, 1))
+            {
+                if (!combat_->ApplyOwnedCombatDamage(target, damage)) return false;
+                healthRevisions_.MarkApplied(result, 1);
+            }
+            if (!combat_->ReadCombatHealth(target, effectiveHealth, effectiveMaximum))
             {
                 return false;
             }
@@ -405,13 +431,8 @@ namespace fable::multiplayer::combat
                     result.impactDirection.x,
                     result.impactDirection.y,
                     result.impactDirection.z};
-                if ((result.impactFlags &
-                        protocol::combat_hit_impact_flag::HasPosition) == 0)
-                {
-                    position[0] = 0.0f;
-                    position[1] = 0.0f;
-                    position[2] = 0.0f;
-                }
+                const bool positionReady = (result.impactFlags &
+                    protocol::combat_hit_impact_flag::HasPosition) != 0 || CurrentHitPosition(target, position);
                 if ((result.impactFlags &
                         protocol::combat_hit_impact_flag::HasDirection) == 0)
                 {
@@ -422,18 +443,19 @@ namespace fable::multiplayer::combat
                     direction[1] = 1.0f;
                     direction[2] = 0.0f;
                 }
-                if (source == nullptr ||
-                    !combat_->SubmitReplicatedHitReaction(
+                const bool submitted = positionReady && source != nullptr &&
+                    combat_->SubmitReplicatedHitReaction(
                         target,
                         source,
                         position,
                         direction,
                         knockDown,
-                        result.reactionId))
-                {
-                    return false;
-                }
-                reactionRoute = "observer-replay";
+                        result.reactionId);
+                // Native arbitration can reject a cosmetic flinch while the
+                // victim attacks, dies or runs a script. Damage above has
+                // already committed: retrying the whole result would apply
+                // that same damage every frame and block later guard hits.
+                reactionRoute = submitted ? "observer-replay" : "observer-reaction-rejected";
             }
             if (terminalWorldEntity)
             {
@@ -523,6 +545,7 @@ namespace fable::multiplayer::combat
         diagnostics_ = {};
         localActorId_ = 0;
         nativeObservations_.Clear();
+        healthRevisions_.Clear();
         terminalTransitions_.Clear();
         recentWorldHits_ = {};
         recentWorldHitIndex_ = 0;

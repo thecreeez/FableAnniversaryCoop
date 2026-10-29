@@ -291,7 +291,9 @@ namespace fable::multiplayer::presentation
         slot.offeredAtLocalMs = GetTickCount64();
         slot.nativeReadyAtLocalMs = 0;
         slot.active = true;
-        return true;
+        // Consume each accepted network command now. A burst of combo frames
+        // must not overwrite an earlier unplayed frame in the same lane.
+        return slot.message.hasNativeAnimation ? Process() : true;
     }
 
     void RemotePlayerActionPresentation::Retire(
@@ -417,6 +419,7 @@ namespace fable::multiplayer::presentation
                         targetReady = true;
                     }
                 }
+                if (message.hasNativeAnimation) targetReady = true; // visual body playback has no target dependency
                 if (!targetReady)
                 {
                     if (localAge >= TargetResolutionGraceMs)
@@ -468,6 +471,19 @@ namespace fable::multiplayer::presentation
                     break;
                 case PlayerActionKind::AbilityRequest:
                 case PlayerActionKind::RangedAim:
+                    if (message.hasNativeAnimation)
+                    {
+                        accepted = remotePlayers_->PerformOwnerAttack(message);
+                        if (accepted)
+                        {
+                            char detail[192] = {};
+                            std::snprintf(detail, sizeof(detail), "actor=%llu action=%llu animation=%u receipt_age_ms=%llu",
+                                static_cast<unsigned long long>(message.ownerActorId), static_cast<unsigned long long>(message.actionId),
+                                message.resolvedAnimationId, static_cast<unsigned long long>(localAge));
+                            diagnostics_.Event("MultiplayerOwnerAttackNativeActionSubmitted", detail);
+                        }
+                        break;
+                    }
                     accepted = remotePlayers_->PerformAbility(
                         message.ownerActorId,
                         message.weaponFamily,

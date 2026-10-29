@@ -25,7 +25,7 @@ namespace fable::game::hero_pawn::appearance::hooks
             const core::Diagnostics& diagnostics) noexcept;
         void Shutdown() noexcept;
 
-        [[nodiscard]] ArmToken Arm() noexcept;
+        [[nodiscard]] ArmToken Arm(bool childhood = false) noexcept;
         void Cancel(ArmToken token = 0) noexcept;
 
         [[nodiscard]] bool IsInstalled() const noexcept;
@@ -59,6 +59,8 @@ namespace fable::game::hero_pawn::appearance::hooks
         core::hooking::InlineHook applyPatch_;
         core::Diagnostics diagnostics_ = {};
         native::RemoteHeroRuntimeDefinition runtimeDefinition_;
+        native::RemoteHeroRuntimeDefinition childDefinition_;
+        native::RemoteHeroRuntimeDefinition* armedDefinition_ = nullptr;
         std::atomic<DWORD> armedThread_{0};
         std::atomic_uint64_t armToken_{0};
         std::atomic_uint substitutions_{0};

@@ -84,7 +84,10 @@ namespace fable::multiplayer
                 descriptors.push_back(*current);
             }
         }
-        if (descriptors.size() != ExpectedDescriptorCount)
+        // One sink may own several packet types (clock state and sleep request).
+        // Validate complete, unique packet ownership below instead of requiring
+        // one descriptor per packet.
+        if (descriptors.empty() || descriptors.size() > ExpectedDescriptorCount)
         {
             ReportCountFailure(diagnostics, descriptors.size());
             return false;
@@ -163,6 +166,14 @@ namespace fable::multiplayer
             }
         }
 
+        for (std::size_t slot = 1; slot < owners.size(); ++slot)
+        {
+            if (IsApplicationReliableType(static_cast<protocol::PacketType>(slot)) && !owners[slot])
+            {
+                diagnostics.Event("ClientFailed", "multiplayer-reliable-sink-packet-unhandled");
+                return false;
+            }
+        }
         for (const ReliableSinkDescriptor* const descriptor : descriptors)
         {
             ReliableMessageSink* const sink = descriptor->resolve(contexts);

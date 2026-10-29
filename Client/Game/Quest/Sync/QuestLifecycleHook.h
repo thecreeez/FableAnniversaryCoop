@@ -76,6 +76,11 @@ namespace fable::multiplayer::persistence
         }
         [[nodiscard]] bool IsActive(const char* name) const noexcept;
         [[nodiscard]] bool IsCompleted(const char* name) const noexcept;
+        bool AcceptCard(const char* name, std::uint32_t definition = 0) noexcept;
+        void RefreshOpenMenu() noexcept;
+        void SetLocalHero(void* hero) noexcept { localHero_ = hero; }
+        bool OpenMenuForTest() noexcept;
+        bool AcceptAvailableCardForTest(char (&quest)[128]) noexcept;
 
         [[nodiscard]] bool IsInstalled() const noexcept
         {
@@ -91,6 +96,12 @@ namespace fable::multiplayer::persistence
         using ResolveFn = void(__thiscall*)(
             void*, game::native::CharString*, std::uint32_t, std::uint32_t, std::uint32_t);
         using PredicateFn = bool(__thiscall*)(void*, const game::native::CharString*);
+        using AcceptCardFn = bool(__thiscall*)(void*, void*, int);
+        using RebuildMenuFn = void(__thiscall*)(void*);
+        static bool __fastcall CardAccepted(void* manager, void*, void* card, int flags);
+        static void __fastcall MenuRebuilt(void* inventory, void*);
+        static bool __fastcall CardEligible(void* card, void*);
+        using CardEligibleFn = bool(__thiscall*)(void*);
 
         static bool __fastcall ActivateObserved(
             void* manager, void*, game::native::CharString* name,
@@ -117,10 +128,12 @@ namespace fable::multiplayer::persistence
             const char* name,
             const std::uint32_t (&arguments)[3],
             bool replay) noexcept;
+        void* CreateCard(std::uint32_t definition, const char* quest) noexcept;
 
         static constexpr std::size_t QueueCapacity = 64;
         static QuestLifecycleHook* active_;
         static thread_local bool replaying_;
+        static thread_local bool acceptingRemoteCard_;
 
         HMODULE gameModule_ = nullptr;
         core::Diagnostics diagnostics_ = {};
@@ -128,6 +141,13 @@ namespace fable::multiplayer::persistence
         core::hooking::InlineHook deactivate_;
         core::hooking::InlineHook complete_;
         core::hooking::InlineHook fail_;
+        core::hooking::InlineHook acceptCard_, rebuildMenu_;
+        core::hooking::InlineHook cardEligible_;
+        CardEligibleFn originalCardEligible_ = nullptr;
+        AcceptCardFn originalAcceptCard_ = nullptr;
+        RebuildMenuFn originalRebuildMenu_ = nullptr;
+        void* questInventory_ = nullptr;
+        void* localHero_ = nullptr;
         ActivateFn originalActivate_ = nullptr;
         DeactivateFn originalDeactivate_ = nullptr;
         ResolveFn originalComplete_ = nullptr;

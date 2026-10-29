@@ -52,6 +52,12 @@ namespace fable::multiplayer::protocol
         DemonDoorOpen = 22,
         KillExperience = 23,
         EnemyTarget = 24,
+        WorldClock = 25,
+        SleepRequest = 26,
+        Destructible = 27,
+        Checkpoint = 28,
+        Weather = 29,
+        Effect = 30,
         Count,
     };
 
