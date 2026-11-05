@@ -573,6 +573,7 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClInclude Include="Multiplayer\World\ChestSyncService.h" />
     <ClInclude Include="Game\Quest\Sync\QuestScreenHook.h" />
     <ClInclude Include="Multiplayer\Combat\EnemyTargetDistributor.h" />
+    <ClInclude Include="Multiplayer\Combat\CombatAggressionState.h" />
     <ClInclude Include="Multiplayer\Combat\NearestPlayerSimulationAssigner.h" />
     <ClInclude Include="Game\Creature\Actions\Native\CreatureMotionActionFunctions.h" />
     <ClInclude Include="Game\Native\ScriptInterfaceTracer.h" />

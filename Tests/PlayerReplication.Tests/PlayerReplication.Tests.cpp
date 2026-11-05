@@ -61,6 +61,8 @@ int RunQuestStateSnapshotTests();
 namespace fable::multiplayer::replication::testing
 {
     void SetLocalHeroState(const PlayerState* state) noexcept;
+    void EmitLocalHealth(float health) noexcept;
+    void SetLocalHealthBaseline(bool enabled, float health) noexcept;
 }
 
 extern "C" void ConfigureRemoteActionPresentationForTest(
@@ -71,6 +73,7 @@ extern "C" std::uint32_t PerformedAbilityCountForTest() noexcept;
 extern "C" std::uint32_t LastPerformedAnimationIdForTest() noexcept;
 
 int RunCombatHitReplicationTests();
+int RunCombatAggressionTests();
 int RunCodePatchTests();
 int RunGameplayFrameMailboxTests();
 int RunSimulationFrameHookTests();
@@ -1847,6 +1850,137 @@ namespace
         CHECK(test, !channels.ApplyActorState(removal, 3, 999));
         CHECK(test, channels.IsLifecycleActive(
             kActorId, kGeneration, kMapEpoch));
+    }
+
+    void TestGuestVitalsSurviveStaleSelfEchoAfterTravel()
+    {
+        constexpr const char* test = "guest vitals after stale self echo";
+        UdpPeer host;
+        UdpPeer guest;
+        if (!StartTransportPair(host, guest, 39208))
+        {
+            CHECK(test, false);
+            guest.Shutdown();
+            host.Shutdown();
+            return;
+        }
+        RemotePlayerChannels channels;
+        fable::multiplayer::replication::LocalHeroReplication localHero;
+        fable::multiplayer::presentation::RemotePlayerRegistry remotePlayers;
+        fable::multiplayer::entities::EntityNetworkIdentityRegistry identities;
+        fable::multiplayer::entities::LiveEntityRegistry liveEntities;
+        fable::multiplayer::authority::AuthorityReplication authority;
+        fable::multiplayer::entities::EntityLifecycleReplication lifecycle;
+        fable::game::creature::combat::CreatureCombatService combat;
+        fable::multiplayer::replication::EntityVitalsReplication vitals;
+        vitals.Initialize(PeerRole::Guest, 2002, guest, authority,
+            lifecycle, identities, channels, combat, TestDiagnostics());
+        auto state = StateFromConstruct(Construct(
+            700, 1, 1, 1, kMapId, "Albion", 2002));
+        actor_state_testing::SetLocalHeroState(&state);
+        // Retain generation 1 exactly as a host echo would, then travel.
+        CHECK(test, vitals.HandleReliableMessage(
+            MakePlayerVitalsTransportMessage(
+                2002, host.ConnectionNonce(), 1, 100.0f)));
+        for (std::uint32_t generation = 2; generation <= 3; ++generation)
+        {
+            state.actorGeneration = generation;
+            state.mapEpoch = generation;
+            for (const float health : {80.0f, 0.0f, 50.0f})
+            {
+                if (health == 80.0f)
+                {
+                    // Travel publishes a baseline without a mutation event.
+                    actor_state_testing::SetLocalHealthBaseline(true, health);
+                }
+                else
+                {
+                    actor_state_testing::EmitLocalHealth(health);
+                }
+                CHECK(test, vitals.Process(localHero, liveEntities, remotePlayers));
+                bool received = false;
+                CHECK(test, WaitFor([&]
+                {
+                    TransportMessage incoming;
+                    while (host.TryConsumeReliable(incoming))
+                    {
+                        fable::multiplayer::protocol::EntityVitalsMessage decoded;
+                        if (incoming.type == fable::multiplayer::protocol::PacketType::EntityVitals &&
+                            fable::multiplayer::protocol::DecodeEntityVitalsMessage(
+                                incoming.payload.data(), incoming.payloadSize, decoded))
+                        {
+                            CHECK(test, decoded.playerActorGeneration == generation);
+                            CHECK(test, decoded.playerMapEpoch == generation);
+                            CHECK(test, decoded.currentHealth == health);
+                            received = true;
+                        }
+                    }
+                    return received;
+                }));
+            }
+        }
+        vitals.Shutdown();
+        actor_state_testing::SetLocalHealthBaseline(false, 100.0f);
+        actor_state_testing::SetLocalHeroState(nullptr);
+        guest.Shutdown();
+        host.Shutdown();
+    }
+
+    void TestGuestVitalsDiscardQueuedPreviousLifecycle()
+    {
+        constexpr const char* test = "guest vitals queued lifecycle fence";
+        UdpPeer guest;
+        CHECK(test, guest.StartGuest(
+            "127.0.0.1", 39209, 2002, TestDiagnostics()));
+        const auto fill = MakePlayerVitalsTransportMessage(
+            2002, 1, 1, 100.0f, true);
+        const auto stream = fable::multiplayer::reliable_stream::Actor(2002);
+        for (std::size_t index = 0;
+             index < fable::multiplayer::ReliableStreamTransport::PerStreamQueueLimit;
+             ++index)
+        {
+            CHECK(test, guest.SubmitReliable(
+                stream, fill.type, fill.payload.data(), fill.payloadSize));
+        }
+        RemotePlayerChannels channels;
+        fable::multiplayer::replication::LocalHeroReplication localHero;
+        fable::multiplayer::presentation::RemotePlayerRegistry remotePlayers;
+        fable::multiplayer::entities::EntityNetworkIdentityRegistry identities;
+        fable::multiplayer::entities::LiveEntityRegistry liveEntities;
+        fable::multiplayer::authority::AuthorityReplication authority;
+        fable::multiplayer::entities::EntityLifecycleReplication lifecycle;
+        fable::game::creature::combat::CreatureCombatService combat;
+        fable::multiplayer::replication::EntityVitalsReplication vitals;
+        vitals.Initialize(PeerRole::Guest, 2002, guest, authority,
+            lifecycle, identities, channels, combat, TestDiagnostics());
+        auto state = StateFromConstruct(Construct(
+            700, 1, 1, 1, kMapId, "Albion", 2002));
+        actor_state_testing::SetLocalHeroState(&state);
+        CHECK(test, vitals.HandleReliableMessage(
+            MakePlayerVitalsTransportMessage(2002, 1, 1, 100.0f)));
+        actor_state_testing::EmitLocalHealth(25.0f);
+        CHECK(test, vitals.Process(localHero, liveEntities, remotePlayers));
+        // The health publication is deferred behind the full actor stream.
+        // Clear only transport capacity, then retry after owner travel.
+        guest.Shutdown();
+        CHECK(test, guest.StartGuest(
+            "127.0.0.1", 39209, 2002, TestDiagnostics()));
+        state.actorGeneration = 2;
+        state.mapEpoch = 2;
+        CHECK(test, vitals.Process(localHero, liveEntities, remotePlayers));
+        // No previous-incarnation publication may occupy the fresh queue.
+        for (std::size_t index = 0;
+             index < fable::multiplayer::ReliableStreamTransport::PerStreamQueueLimit;
+             ++index)
+        {
+            CHECK(test, guest.SubmitReliable(
+                stream, fill.type, fill.payload.data(), fill.payloadSize));
+        }
+        CHECK(test, !guest.SubmitReliable(
+            stream, fill.type, fill.payload.data(), fill.payloadSize));
+        vitals.Shutdown();
+        actor_state_testing::SetLocalHeroState(nullptr);
+        guest.Shutdown();
     }
 
     void TestQueuedActionAndVitalsAreFencedByReplacementSession()
@@ -4973,12 +5107,22 @@ namespace
 }
 
 int RunWorldClockTests();
+int RunWorldTravelObserverTests();
 int RunWeatherTests();
 int RunEffectTests();
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::strcmp(argv[1], "--world-travel") == 0)
+        return RunWorldTravelObserverTests() == 0 ? 0 : 1;
+    if (argc == 2 && std::strcmp(argv[1], "--combat-aggression") == 0)
+    {
+        const int result = RunCombatAggressionTests();
+        if (result == 0) std::cout << "Combat aggression tests passed\n";
+        return result == 0 ? 0 : 1;
+    }
     if (RunWorldClockTests() != 0) return 1;
+    if (RunWorldTravelObserverTests() != 0) return 1;
     if (RunWeatherTests() != 0) return 1;
     if (RunEffectTests() != 0) return 1;
     TestHeroLifeStageCodec();
@@ -5041,6 +5185,8 @@ int main()
     TestMandatoryComponentRemovalIsRejected();
     TestConstructionRetransmissionOrdersBaselineBeforeAction();
     TestLargeActorBaselineFragmentsReliably();
+    TestGuestVitalsSurviveStaleSelfEchoAfterTravel();
+    TestGuestVitalsDiscardQueuedPreviousLifecycle();
     TestQueuedActionAndVitalsAreFencedByReplacementSession();
     TestActionQueueClearsAcrossRetirementAndMapHandoff();
     TestRapidActionsKeepOnlyLatestCurrentPresentation();
@@ -5071,6 +5217,7 @@ int main()
     };
     failures += runFocused(
         "combat hit replication", RunCombatHitReplicationTests());
+    failures += runFocused("combat aggression", RunCombatAggressionTests());
     failures += runFocused("code patch", RunCodePatchTests());
     failures += runFocused("entity flag ABI", RunEntityFlagFunctionTests());
     failures += runFocused("diagnostic file lifecycle", RunDiagnosticLogTests());

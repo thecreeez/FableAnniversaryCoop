@@ -735,7 +735,14 @@ namespace fable::multiplayer::replication
                     (local->authorityEpoch != queued.playerAuthorityEpoch ||
                         local->actorGeneration != queued.playerActorGeneration ||
                         local->mapEpoch != queued.playerMapEpoch);
-                if (latestMismatch || localMismatch)
+                // The owner's current lifecycle fences locally authored work.
+                // Its last host echo can still belong to the previous map;
+                // using that echo here would discard every new incarnation.
+                // Remote baselines still use the retained authoritative state.
+                const bool stale = queued.playerActorId == localActorId_
+                    ? local == nullptr || localMismatch
+                    : latestMismatch;
+                if (stale)
                 {
                     pending_.pop_front();
                     continue;

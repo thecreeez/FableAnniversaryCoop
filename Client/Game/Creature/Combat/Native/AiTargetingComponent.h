@@ -28,6 +28,20 @@ namespace fable::game::creature::combat::native
         static bool BindCombatTarget(HMODULE module, void* creature, void* target) noexcept;
         static void ClearCombatTarget(void* creature) noexcept;
         static bool ConsumeCombatTargetRead(void* creature) noexcept;
+        // Native pairwise enemy predicate, used by targeting and OnHit.
+        // This observes the retail decision without adding enemy relations.
+        static constexpr std::uintptr_t EnemyRelationRva = 0x01988480;
+        [[nodiscard]] static bool ReadEnemyRelation(
+            HMODULE module, void* creature, void* target, bool& enemy) noexcept;
+        // Retail CTCEnemy add/remove pair, the same pair used by script
+        // slots616/617. Only remove an entry when Ensure reports ownership.
+        static constexpr std::uintptr_t AddEnemyRva = 0x01988130;
+        static constexpr std::uintptr_t RemoveEnemyRva = 0x019882D0;
+        [[nodiscard]] static bool EnsureAttackEnemy(
+            HMODULE module, void* creature, void* attacker, bool& added,
+            std::uint64_t& attackerUid) noexcept;
+        [[nodiscard]] static bool ReleaseAttackEnemy(
+            HMODULE module, void* creature, std::uint64_t attackerUid) noexcept;
         [[nodiscard]] static bool Validate(
             HMODULE gameModule,
             void* targetingComponent) noexcept;

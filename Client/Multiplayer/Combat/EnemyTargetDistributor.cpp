@@ -41,6 +41,7 @@ namespace
         fable::game::Vector3 position = {};
         bool local = false;
         std::uint16_t mapId = 0;
+        fable::multiplayer::PlayerState state;
     };
 
     bool IsAlive(void* creature) noexcept
@@ -95,11 +96,25 @@ namespace fable::multiplayer::combat
         diagnostics_ = diagnostics;
     }
 
+    std::uint64_t EnemyTargetDistributor::SourceConnectionNonce(
+        std::uint64_t actor) const noexcept
+    {
+        const auto* local = localHero_ != nullptr ? localHero_->CurrentState() : nullptr;
+        if (local != nullptr && local->actorId == actor)
+            return transport_ != nullptr ? transport_->ConnectionNonce() : 0;
+        const auto* lifecycle = remotePlayers_ != nullptr
+            ? remotePlayers_->FindLifecycle(actor) : nullptr;
+        return lifecycle != nullptr ? lifecycle->connectionNonce : 0;
+    }
+
     void EnemyTargetDistributor::ObserveAppliedHit(void* context, const protocol::CombatHitMessage& hit)
     {
         auto* self = static_cast<EnemyTargetDistributor*>(context);
+        if (self == nullptr) return;
+        self->aggression_.Observe(hit, GetTickCount64(),
+            self->SourceConnectionNonce(hit.sourceId));
         const float damage = hit.healthBefore - hit.healthAfter;
-        if (self == nullptr || hit.sourceDomain != protocol::CombatActionDomain::Player ||
+        if (hit.sourceDomain != protocol::CombatActionDomain::Player ||
             hit.targetKind != protocol::CombatParticipantKind::WorldEntity ||
             hit.sourceId == 0 || hit.targetId == 0 || !std::isfinite(damage) || damage <= 0 ||
             hit.targetGeneration == 0 || hit.targetMapEpoch == 0) return;
@@ -136,6 +151,7 @@ namespace fable::multiplayer::combat
         nextRevision_ = 0;
         assignments_.clear();
         revenge_.clear();
+        aggression_.Clear();
         entities_ = nullptr;
         entityActions_ = nullptr;
         simulation_ = nullptr;
@@ -149,6 +165,24 @@ namespace fable::multiplayer::combat
     void EnemyTargetDistributor::Release(const std::uint64_t thingUid, Assignment& assignment) noexcept
     {
         game::creature::combat::native::AiTargetingComponent::ClearCombatTarget(assignment.creature);
+        if (assignment.addedEnemy && entities_ != nullptr)
+        {
+            const auto* live = presence_ != nullptr
+                ? presence_->LiveEntities().Find(thingUid) : nullptr;
+            // A retired/rebound Thing already owns destruction of its enemy
+            // component. Never remove a relation through an old native body.
+            if (live != nullptr && live->thing == assignment.creature &&
+                live->localIncarnation == assignment.incarnation)
+            {
+                const bool released = game::creature::combat::native::
+                    AiTargetingComponent::ReleaseAttackEnemy(
+                        entities_->GameModule(), live->thing, assignment.targetUid);
+                diagnostics_.Event(released ? "MultiplayerAttackEnemyReleased"
+                    : "MultiplayerAttackEnemyReleaseFailed",
+                    "retiring simulator-owned attacker relation");
+            }
+            assignment.addedEnemy = false;
+        }
         if (!assignment.overridden || assignment.creature == nullptr || entities_ == nullptr) return;
         // Only touch a creature that is still the same live Thing.
         const entities::LiveEntityRecord* const live = presence_ != nullptr
@@ -181,14 +215,14 @@ namespace fable::multiplayer::combat
         const PlayerState* const local = localHero_->CurrentState();
         if (local == nullptr || local->mapId == 0) { ApplyPlans(now); return; }
         std::vector<Candidate> candidates;
-        if (IsAlive(localHero_->NativeHero())) candidates.push_back({local->actorId, localHero_->NativeHero(), local->position, true, local->mapId});
+        if (IsAlive(localHero_->NativeHero())) candidates.push_back({local->actorId, localHero_->NativeHero(), local->position, true, local->mapId, *local});
         for (const auto& remote : remotePlayers_->Snapshots())
         {
             const auto& state = remote.state;
             if (state.mapId == 0 || remote.receivedAt == 0 || now - remote.receivedAt > RemoteStateFreshMilliseconds) continue;
             void* body = combatants_->FindCreature(state.actorId);
             if (state.mapId != local->mapId || IsAlive(body))
-                candidates.push_back({state.actorId, body, state.position, false, state.mapId});
+                candidates.push_back({state.actorId, body, state.position, false, state.mapId, state});
         }
         std::unordered_set<std::uint64_t> engaged;
         for (const auto& entry : entityActions_->EngagedCreatures(now, EngagementMilliseconds))
@@ -225,6 +259,13 @@ namespace fable::multiplayer::combat
             for (const Candidate& candidate : candidates)
             {
                 if (candidate.mapId != world.mapId) continue;
+                bool enemy = false;
+                if (live != nullptr && candidate.creature != nullptr &&
+                    game::creature::combat::native::AiTargetingComponent::ReadEnemyRelation(
+                        entities_->GameModule(), live->thing, candidate.creature, enemy) &&
+                    !enemy && !aggression_.Allows(world.thingUid, world.generation,
+                        world.mapEpoch, candidate.state, now,
+                        SourceConnectionNonce(candidate.actorId))) continue;
                 const float distance = PlanarDistance(position, candidate.position);
                 if (!std::isfinite(distance) || distance > 40.0f ||
                     std::fabs(position.z - candidate.position.z) > 12.0f) continue;
@@ -258,6 +299,9 @@ namespace fable::multiplayer::combat
                 for (const auto& candidate : candidates)
                 {
                     if (candidate.mapId != world.mapId) continue;
+                    if (!aggression_.Allows(world.thingUid, world.generation,
+                            world.mapEpoch, candidate.state, now,
+                            SourceConnectionNonce(candidate.actorId))) continue;
                     const float distance = PlanarDistance(position, candidate.position);
                     if (distance > 30 || std::fabs(position.z - candidate.position.z) > 12) continue;
                     const auto found = revenge.attackers.find(candidate.actorId);
@@ -348,21 +392,106 @@ namespace fable::multiplayer::combat
             if (local == nullptr || plan.mapId != local->mapId) continue;
             const auto* world = lifecycle_->Directory().Find(plan.uid);
             const auto* live = presence_->LiveEntities().Find(plan.uid);
-            if (world == nullptr || !world->live || world->generation != plan.generation || world->mapEpoch != plan.mapEpoch ||
+            if (world == nullptr || !world->live || !world->available || world->generation != plan.generation || world->mapEpoch != plan.mapEpoch ||
                 live == nullptr || !IsAlive(live->thing) || game::ScriptControl::HasNativeControl(live->thing) ||
                 !simulation_->IsLocallySimulated(live->thing)) continue;
             void* target = plan.actor == local->actorId ? localHero_->NativeHero() : combatants_->FindCreature(plan.actor);
             if (!IsAlive(target)) continue;
+            PlayerState targetState;
+            bool stateReady = plan.actor == local->actorId;
+            if (stateReady) targetState = *local;
+            else for (const auto& remote : remotePlayers_->Snapshots())
+            {
+                if (remote.state.actorId == plan.actor)
+                {
+                    targetState = remote.state;
+                    stateReady = true;
+                    break;
+                }
+            }
+            if (!stateReady || targetState.mapId != plan.mapId) continue;
+            const auto sourceNonce = SourceConnectionNonce(plan.actor);
+            if (sourceNonce == 0) continue;
             Assignment binding;
             const auto old = nativeAssignments_.find(plan.uid);
-            if (old != nativeAssignments_.end() && old->second.creature == live->thing && old->second.targetCreature == target)
-                binding = old->second;
+            if (old != nativeAssignments_.end())
+            {
+                if (old->second.creature == live->thing &&
+                    old->second.incarnation == live->localIncarnation &&
+                    old->second.targetCreature == target &&
+                    old->second.generation == plan.generation &&
+                    old->second.mapEpoch == plan.mapEpoch &&
+                    old->second.playerAuthorityEpoch == targetState.authorityEpoch &&
+                    old->second.playerConnectionNonce == sourceNonce &&
+                    old->second.playerGeneration == targetState.actorGeneration &&
+                    old->second.playerMapEpoch == targetState.mapEpoch)
+                    binding = old->second;
+                else Release(plan.uid, old->second);
+            }
             binding.creature = live->thing;
             binding.targetCreature = target;
             binding.actorId = plan.actor;
+            binding.incarnation = live->localIncarnation;
+            binding.generation = plan.generation;
+            binding.mapEpoch = plan.mapEpoch;
+            binding.playerAuthorityEpoch = targetState.authorityEpoch;
+            binding.playerConnectionNonce = sourceNonce;
+            binding.playerGeneration = targetState.actorGeneration;
+            binding.playerMapEpoch = targetState.mapEpoch;
+            if (!binding.addedEnemy && aggression_.Allows(plan.uid,
+                    plan.generation, plan.mapEpoch, targetState, now, sourceNonce))
+            {
+                const bool ready = AiTargetingComponent::EnsureAttackEnemy(
+                    entities_->GameModule(), live->thing, target,
+                    binding.addedEnemy, binding.targetUid);
+                if (!ready && !binding.addedEnemy && binding.targetEnemyRelation == -2)
+                {
+                    char detail[192] = {};
+                    std::snprintf(detail, sizeof(detail),
+                        "thing_uid=%016llX attacker_actor=%llu; native signature, relationship or script-control validation refused insertion",
+                        static_cast<unsigned long long>(plan.uid),
+                        static_cast<unsigned long long>(plan.actor));
+                    diagnostics_.Event("MultiplayerAttackEnemyBlocked", detail);
+                }
+                if (binding.addedEnemy)
+                {
+                    char detail[224] = {};
+                    std::snprintf(detail, sizeof(detail),
+                        "thing_uid=%016llX attacker_actor=%llu generation=%u map_epoch=%u relation_ready=%s",
+                        static_cast<unsigned long long>(plan.uid),
+                        static_cast<unsigned long long>(plan.actor),
+                        plan.generation, plan.mapEpoch, ready ? "true" : "false");
+                    diagnostics_.Event("MultiplayerAttackEnemyAdded", detail);
+                }
+            }
+            bool enemy = false;
+            const int targetRelation = AiTargetingComponent::ReadEnemyRelation(
+                entities_->GameModule(), live->thing, target, enemy)
+                ? (enemy ? 1 : 0) : -1;
+            const int localRelation = target == localHero_->NativeHero()
+                ? targetRelation
+                : AiTargetingComponent::ReadEnemyRelation(
+                    entities_->GameModule(), live->thing,
+                    localHero_->NativeHero(), enemy)
+                    ? (enemy ? 1 : 0) : -1;
+            if (binding.targetEnemyRelation != targetRelation ||
+                binding.localEnemyRelation != localRelation)
+            {
+                char detail[256] = {};
+                std::snprintf(detail, sizeof(detail),
+                    "thing_uid=%016llX target_actor=%llu local_actor=%llu generation=%u map_epoch=%u target_enemy=%d local_enemy=%d; -1=unavailable",
+                    static_cast<unsigned long long>(plan.uid),
+                    static_cast<unsigned long long>(plan.actor),
+                    static_cast<unsigned long long>(local->actorId),
+                    plan.generation, plan.mapEpoch, targetRelation, localRelation);
+                diagnostics_.Event("MultiplayerEnemyTargetRelation", detail);
+                binding.targetEnemyRelation = targetRelation;
+                binding.localEnemyRelation = localRelation;
+            }
             if (!AiTargetingComponent::BindCombatTarget(entities_->GameModule(), live->thing, target))
             {
                 diagnostics_.Event("MultiplayerNativeEnemyTargetBlocked", "native AI getter bytes or vtable did not match");
+                Release(plan.uid, binding);
                 continue;
             }
             if (!binding.readReported && AiTargetingComponent::ConsumeCombatTargetRead(live->thing))

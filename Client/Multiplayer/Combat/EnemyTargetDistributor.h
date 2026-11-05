@@ -4,6 +4,7 @@
 
 #include "Core/Diagnostics/Diagnostics.h"
 #include "Game/Math/Vector3.h"
+#include "CombatAggressionState.h"
 
 #include <cstdint>
 #include <unordered_map>
@@ -92,6 +93,13 @@ namespace fable::multiplayer::combat
             std::uint16_t mapId = 0;
             std::uint64_t revision = 0, publishedAt = 0;
             bool readReported = false;
+            int targetEnemyRelation = -2;
+            int localEnemyRelation = -2;
+            bool addedEnemy = false;
+            std::uint64_t targetUid = 0;
+            std::uint64_t playerConnectionNonce = 0;
+            std::uint32_t playerAuthorityEpoch = 0, playerGeneration = 0,
+                playerMapEpoch = 0;
         };
 
         struct Threat { float damage = 0; std::uint64_t at = 0; };
@@ -103,6 +111,8 @@ namespace fable::multiplayer::combat
             std::unordered_map<std::uint64_t, Threat> attackers;
         };
         std::unordered_map<std::uint64_t, Revenge> revenge_;
+        CombatAggressionState aggression_;
+        std::uint64_t SourceConnectionNonce(std::uint64_t actor) const noexcept;
         void Release(std::uint64_t thingUid, Assignment& assignment) noexcept;
 
         void ApplyPlans(std::uint64_t now);

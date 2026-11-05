@@ -688,6 +688,7 @@
     <ClInclude Include="Multiplayer\Combat\PlayerCombatantDirectory.h"><Filter>Multiplayer\Combat</Filter></ClInclude>
     <ClInclude Include="Multiplayer\Combat\CombatActionLedger.h"><Filter>Multiplayer\Combat</Filter></ClInclude>
     <ClInclude Include="Multiplayer\Combat\CombatHitReactionPolicy.h"><Filter>Multiplayer\Combat</Filter></ClInclude>
+    <ClInclude Include="Multiplayer\Combat\CombatAggressionState.h"><Filter>Multiplayer\Combat</Filter></ClInclude>
     <ClInclude Include="Multiplayer\Combat\CombatTerminalTransitionState.h"><Filter>Multiplayer\Combat</Filter></ClInclude>
     <ClInclude Include="Multiplayer\Combat\CombatHitApplicator.h"><Filter>Multiplayer\Combat</Filter></ClInclude>
     <ClInclude Include="Multiplayer\Combat\CombatHitCandidateBuilder.h"><Filter>Multiplayer\Combat</Filter></ClInclude>

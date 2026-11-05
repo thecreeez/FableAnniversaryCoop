@@ -44,6 +44,7 @@ namespace fable::game::world::travel
         [[nodiscard]] bool IsInstalled() const noexcept;
 
     private:
+        friend struct WorldTravelObserverTestAccess;
         static constexpr unsigned int DiagnosticEventLimit = 32;
         static constexpr std::size_t MaximumLevelNames = 32;
         struct DeferredMapChange final

@@ -44,6 +44,9 @@
     <ClCompile Include="..\..\Client\Multiplayer\Protocol\WorldClockMessage.cpp" />
     <ClCompile Include="..\..\Client\Multiplayer\Protocol\WeatherMessage.cpp" />
     <ClCompile Include="WorldClock.Tests.cpp" />
+    <ClCompile Include="WorldTravelObserver.Tests.cpp" />
+    <ClCompile Include="..\..\Client\Game\World\Travel\Hooks\WorldTravelObserver.cpp" />
+    <ClCompile Include="..\..\Client\Game\World\Travel\Native\WorldTravelFunctions.cpp" />
     <ClCompile Include="Weather.Tests.cpp" />
     <ClCompile Include="Effect.Tests.cpp" />
     <ClCompile Include="..\..\Client\Multiplayer\Protocol\EffectMessage.cpp" />
@@ -65,6 +68,8 @@
     <ClCompile Include="..\..\Client\DeveloperTools\DeveloperToolBackend.cpp" />
     <ClCompile Include="PlayerReplication.Tests.cpp" />
     <ClCompile Include="CombatHitReplication.Tests.cpp" />
+    <ClCompile Include="CombatAggression.Tests.cpp" />
+    <ClCompile Include="..\..\Client\Game\Creature\Combat\Native\AiTargetingComponent.cpp" />
     <ClCompile Include="..\..\Client\Multiplayer\Combat\CombatActionLedger.cpp" />
     <ClCompile Include="..\..\Client\Multiplayer\Protocol\CombatHitCodec.cpp" />
     <ClCompile Include="..\..\Client\Multiplayer\Protocol\AuthorityMessage.cpp" />

@@ -26,6 +26,12 @@ namespace
     std::string g_actionMapName;
     std::uint32_t g_performedAbilityCount = 0;
     std::uint32_t g_lastPerformedAnimationId = 0;
+    fable::game::creature::combat::CreatureCombatService::HealthMutationSink
+        g_healthSink = nullptr;
+    void* g_healthContext = nullptr;
+    int g_healthHero = 0;
+    bool g_healthHeroEnabled = false;
+    float g_currentHealth = 100.0f;
 }
 
 namespace fable::multiplayer::replication::testing
@@ -33,6 +39,24 @@ namespace fable::multiplayer::replication::testing
     void SetLocalHeroState(const PlayerState* state) noexcept
     {
         g_currentState = state;
+    }
+
+    void EmitLocalHealth(const float health) noexcept
+    {
+        fable::game::creature::combat::CombatHealthMutationEvent event;
+        event.creature = g_healthHeroEnabled ? &g_healthHero : nullptr;
+        event.currentHealth = health;
+        event.maximumHealth = 100.0f;
+        if (g_healthSink != nullptr)
+        {
+            g_healthSink(g_healthContext, event);
+        }
+    }
+
+    void SetLocalHealthBaseline(const bool enabled, const float health) noexcept
+    {
+        g_healthHeroEnabled = enabled;
+        g_currentHealth = health;
     }
 }
 
@@ -78,7 +102,7 @@ namespace fable::multiplayer::replication
 
     void* LocalHeroReplication::NativeHero() const noexcept
     {
-        return nullptr;
+        return g_healthHeroEnabled ? &g_healthHero : nullptr;
     }
 
     bool LocalHeroReplication::IsWorldReady() const noexcept
@@ -261,24 +285,37 @@ namespace fable::game::creature::combat
     }
 
     bool CreatureCombatService::AddHealthMutationSink(
-        HealthMutationSink,
-        void*) noexcept
+        HealthMutationSink sink,
+        void* context) noexcept
     {
+        g_healthSink = sink;
+        g_healthContext = context;
         return true;
     }
 
     void CreatureCombatService::RemoveHealthMutationSink(
-        HealthMutationSink,
-        void*) noexcept
+        HealthMutationSink sink,
+        void* context) noexcept
     {
+        if (g_healthSink == sink && g_healthContext == context)
+        {
+            g_healthSink = nullptr;
+            g_healthContext = nullptr;
+        }
     }
 
     bool CreatureCombatService::ReadCombatHealth(
-        void*,
-        float&,
-        float&) const noexcept
+        void* creature,
+        float& current,
+        float& maximum) const noexcept
     {
-        return false;
+        if (!g_healthHeroEnabled || creature != &g_healthHero)
+        {
+            return false;
+        }
+        current = g_currentHealth;
+        maximum = 100.0f;
+        return true;
     }
 
     bool CreatureCombatService::ApplyAuthoritativeCombatHealth(
