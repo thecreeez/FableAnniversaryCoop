@@ -16,8 +16,11 @@ namespace fable::game::hero_pawn::appearance::hooks
     public:
         bool Install(HMODULE module, const core::Diagnostics& diagnostics) noexcept;
         bool Shutdown() noexcept;
-        static void Update(void* thing) noexcept;
+        static void Update(void* thing, bool childhood=false) noexcept;
         static void Forget(void* thing) noexcept;
+        static void SetCutsceneHidden(bool hidden) noexcept;
+        // Read-only acceptance probe; never repairs or submits a mesh.
+        static bool InspectForTest(void* thing, bool hidden) noexcept;
 
     private:
         struct Entry final
@@ -27,6 +30,8 @@ namespace fable::game::hero_pawn::appearance::hooks
             std::atomic<void*> master{nullptr};
             std::atomic<void*> skin{nullptr};
             std::atomic_bool queued{false};
+            std::atomic_bool childhood{false};
+            std::atomic_uint64_t visualKey{0};
         };
         using AddMesh = void(__cdecl*)(void*);
         using BuildMap = void(__thiscall*)(void*);
@@ -37,6 +42,7 @@ namespace fable::game::hero_pawn::appearance::hooks
         static bool __cdecl CheckSkinStreaming(void* graphic, void* command,
             std::size_t size, void* callback, char replace);
         static void* __cdecl ResolveSkinPawn(void* pawn);
+        static void __cdecl RefreshVisual(void* command);
         bool FixMap(void* mesh) noexcept;
         Entry* FindGraphic(void* graphic) noexcept;
 

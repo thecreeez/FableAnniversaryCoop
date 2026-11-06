@@ -150,6 +150,7 @@ namespace fable::automation::multiplayer::features
 
     bool FeatureAcceptanceDriver::ProcessGameThreadIdle() noexcept
     {
+        if (GetEnvironmentVariableW(L"ALBIONTOGETHER_THERESA_TEST", nullptr, 0)) return false;
         if (enabled_ && sharedWorld_) return ProcessSharedWorld();
         const Phase phase = phase_.load(std::memory_order_acquire);
         if (!enabled_ || !host_ || multiplayer_ == nullptr || phase == Phase::WaitingForWorld ||

@@ -41,6 +41,19 @@ namespace fable::launcher::multiplayer
             peers.WaitEventDetail(host, "CutsceneModeRestored", "sequence=begun") &&
             peers.WaitEvent(host, "CutsceneStartReturned") &&
             peers.WaitEvent(guest, "CutsceneStartReturned");
+        if (GetEnvironmentVariableW(L"ALBIONTOGETHER_THERESA_SCENE_TEST", nullptr, 0))
+        {
+            const bool okay=played && peers.WaitEvent(host,"TheresaSceneHiddenVerified") &&
+                peers.WaitEvent(guest,"TheresaSceneHiddenVerified") &&
+                peers.WaitEvent(guest,"CutsceneSkipLocal") && peers.WaitEvent(host,"CutsceneSkipApplied") &&
+                peers.WaitEvent(host,"TheresaSceneRestoredVerified") && peers.WaitEvent(guest,"TheresaSceneRestoredVerified") &&
+                peers.IsResponsive(host) && peers.IsResponsive(guest);
+            const bool stopped=session.Shutdown();
+            std::wcout << L"Multiplayer Theresa scene acceptance " << (okay && stopped?L"passed":L"failed")
+                << L": gather, cancel, rejoin, shared skip, actual mesh hiding and guest separation.\nState root: "
+                << session.context().sessionRoot.wstring() << L"\n";
+            return okay && stopped?0:1;
+        }
         // Enemies attack every player, with the players far apart: the wasp
         // hits the host, then (moved to the guest) the guest, whose own game
         // loses health, then the host again after the players swap.

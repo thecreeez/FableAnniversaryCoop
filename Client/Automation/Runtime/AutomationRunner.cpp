@@ -1,12 +1,14 @@
 #include "AutomationRunner.h"
 
 #include "Automation/LocalInstance/MapTransitionAcceptanceDriver.h"
+#include "Automation/LocalInstance/ChildhoodAcceptanceDriver.h"
 #include "Automation/Multiplayer/Abilities/HeroWillAbilityAcceptanceDriver.h"
 #include "Automation/Multiplayer/Combat/CombatTargetAcceptanceDriver.h"
 #include "Automation/Multiplayer/Combat/CombatVisualExchangeDriver.h"
 #include "Automation/Multiplayer/Persistence/SaveAcceptanceDriver.h"
 #include "Automation/Multiplayer/Quest/QuestSyncAcceptanceDriver.h"
 #include "Automation/Multiplayer/Features/FeatureAcceptanceDriver.h"
+#include "Automation/Multiplayer/Features/TheresaAcceptanceDriver.h"
 #include "Automation/Multiplayer/Features/CutsceneAcceptanceDriver.h"
 #include "Automation/Multiplayer/Transition/NpcTransferAcceptanceDriver.h"
 #include "Automation/Multiplayer/Transition/MapStressAcceptanceDriver.h"
@@ -23,6 +25,7 @@ namespace fable::automation::runtime
     {
     public:
         ::fable::automation::local_instance::MapTransitionAcceptanceDriver transition;
+        ::fable::automation::local_instance::ChildhoodAcceptanceDriver childhood;
         ::fable::automation::multiplayer::combat::CombatTargetAcceptanceDriver combatTarget;
         ::fable::automation::multiplayer::combat::CombatVisualExchangeDriver combatVisual;
         ::fable::automation::multiplayer::abilities::HeroWillAbilityAcceptanceDriver heroWill;
@@ -32,6 +35,7 @@ namespace fable::automation::runtime
         ::fable::automation::multiplayer::persistence::SaveAcceptanceDriver save;
         ::fable::automation::multiplayer::quest::QuestSyncAcceptanceDriver questSync;
         ::fable::automation::multiplayer::features::FeatureAcceptanceDriver features;
+        ::fable::automation::multiplayer::features::TheresaAcceptanceDriver theresa;
         ::fable::automation::multiplayer::features::CutsceneAcceptanceDriver cutscene;
         ::fable::multiplayer::MultiplayerSession* multiplayer = nullptr;
         ::fable::core::Diagnostics diagnostics = {};
@@ -59,6 +63,10 @@ namespace fable::automation::runtime
         Shutdown();
         state_->multiplayer = &multiplayer;
         state_->diagnostics = diagnostics;
+        state_->childhood.Initialize(
+            configuration.ScenarioIs(L"bootstrap_fixture_probe") &&
+                GetEnvironmentVariableW(L"ALBIONTOGETHER_CHILDHOOD_TEST", nullptr, 0)
+                ? &services : nullptr, diagnostics);
 
         const bool transition =
             configuration.ScenarioIs(L"multiplayer_host_transition") ||
@@ -169,6 +177,8 @@ namespace fable::automation::runtime
             configuration.ScenarioIs(L"multiplayer_host_features");
         const bool guestFeatures =
             configuration.ScenarioIs(L"multiplayer_guest_features");
+        state_->theresa.Initialize(hostFeatures || guestFeatures, hostFeatures,
+            services.Entities(), multiplayer, diagnostics);
         state_->features.Initialize(
             hostFeatures || guestFeatures,
             hostFeatures,
@@ -239,6 +249,8 @@ namespace fable::automation::runtime
     {
         return state_ != nullptr &&
             (state_->transition.ProcessGameThreadIdle() ||
+                state_->childhood.ProcessGameThreadIdle() ||
+                state_->theresa.ProcessGameThreadIdle() ||
                 state_->save.ProcessGameThreadIdle() ||
                 state_->questSync.ProcessGameThreadIdle() ||
                 state_->features.ProcessGameThreadIdle() ||
@@ -253,6 +265,8 @@ namespace fable::automation::runtime
             return;
         }
         state_->npcTransfer.Shutdown();
+        state_->childhood.Shutdown();
+        state_->theresa.Shutdown();
         state_->save.Shutdown();
         state_->questSync.Shutdown();
         state_->features.Shutdown();

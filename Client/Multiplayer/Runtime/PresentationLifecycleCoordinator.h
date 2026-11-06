@@ -28,5 +28,6 @@ namespace fable::multiplayer
         bool sourceMapFinalDrainRequired_ = false;
         std::size_t reportedRemotePlayerCount_ = 0;
         bool cutsceneHidden_ = false;
+        std::uint64_t separateAfter_ = 0;
     };
 }

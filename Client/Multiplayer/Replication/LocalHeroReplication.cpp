@@ -506,7 +506,8 @@ namespace fable::multiplayer::replication
                 game::hero_pawn::appearance::ReportHeroSkeletalPresentation(
                     "owner", nativeHero_, diagnostics_);
         }
-        game::hero_pawn::appearance::hooks::TheresaHeroSkin::Update(nativeHero_);
+        game::hero_pawn::appearance::hooks::TheresaHeroSkin::Update(nativeHero_,
+            CurrentState() && CurrentState()->heroMorph.childhood);
         CaptureMovement(GetTickCount64());
         if (transport_->HasFailed() && !transportFailureReported_)
         {
@@ -1211,5 +1212,51 @@ namespace fable::multiplayer::replication
     const PlayerState* LocalHeroReplication::CurrentState() const noexcept
     {
         return channel_ != nullptr ? channel_->CurrentState() : nullptr;
+    }
+
+    bool LocalHeroReplication::SeparateAfterCutscene(const PlayerState& host)
+    {
+        if (role_!=PeerRole::Guest || !IsWorldReady() || !hero_ ||
+            host.role!=PeerRole::Host || host.mapName!=mapName_) return false;
+        auto position=hero_->GetPosition();
+        float x=position.x-host.position.x, y=position.y-host.position.y;
+        const float distance=std::sqrt(x*x+y*y);
+        if (!std::isfinite(distance) || !std::isfinite(position.z)) return false;
+        if (distance>=1.6f || std::fabs(position.z-host.position.z)>1.5f) return true;
+        if (distance<0.1f)
+        {
+            const float angle=(host.facing+0.25f)*6.28318530718f;
+            x=std::cos(angle); y=std::sin(angle);
+        }
+        else { x/=distance; y/=distance; }
+        position.x=host.position.x+x*1.8f;
+        position.y=host.position.y+y*1.8f;
+        if (!hero_->Teleport(position,hero_->GetFacing(),false)) return false;
+        diagnostics_.Event("MultiplayerGuestSeparatedAfterCutscene",
+            "guest moved 1.8m from overlapping host through native teleport; facing and local height retained");
+        // Require a later observation outside the overlap before completing;
+        // a cutscene's final native placement may still overwrite this call.
+        return false;
+    }
+
+    void LocalHeroReplication::PruneRestoredPlayerPresentations(
+        const entities::LiveEntityRegistry& liveEntities)
+    {
+        if (!entities_ || !worldReady_ || orphanScanRevision_==liveEntities.Revision()) return;
+        orphanScanRevision_=liveEntities.Revision();
+        for (const auto& record:liveEntities.Snapshot())
+        {
+            // A live mod-created replica receives HeroMorph before registration.
+            // A retail NPC restored from an older save has only its base graph.
+            if (!record.creature || record.hasHeroMorph || record.thing==nativeHero_ ||
+                record.scriptName!="SCRIPT_NAME_ALBION_TOGETHER_REMOTE_PLAYER") continue;
+            auto* orphan=entities_->FindByUid(record.thingUid);
+            if (!orphan) continue;
+            const bool exact=entities_->ResolveNative(orphan->NativeHandle())==record.thing;
+            if (exact && orphan->RequestDestroy(false))
+                diagnostics_.Event("MultiplayerRestoredPlayerNpcRemoved",
+                    "removed saved remote-player NPC marker without a live Hero component graph");
+            orphan->Release();
+        }
     }
 }

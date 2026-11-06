@@ -61,6 +61,7 @@ namespace fable::game::hero_pawn::appearance::hooks
         native::RemoteHeroRuntimeDefinition runtimeDefinition_;
         native::RemoteHeroRuntimeDefinition childDefinition_;
         native::RemoteHeroRuntimeDefinition theresaDefinition_;
+        native::RemoteHeroRuntimeDefinition theresaChildDefinition_;
         native::RemoteHeroRuntimeDefinition* armedDefinition_ = nullptr;
         std::atomic<DWORD> armedThread_{0};
         std::atomic_uint64_t armToken_{0};

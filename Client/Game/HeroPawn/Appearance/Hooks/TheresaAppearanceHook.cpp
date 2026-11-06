@@ -117,6 +117,7 @@ namespace fable::game::hero_pawn::appearance::hooks
 {
     TheresaAppearanceHook* TheresaAppearanceHook::active_ = nullptr;
     std::atomic<void*> TheresaAppearanceHook::remoteDefinition_{nullptr};
+    std::atomic<void*> TheresaAppearanceHook::remoteChildDefinition_{nullptr};
     std::atomic<void*> TheresaAppearanceHook::localThing_{nullptr};
 
     bool TheresaAppearanceHook::Install(HMODULE module, bool guest,
@@ -203,6 +204,7 @@ namespace fable::game::hero_pawn::appearance::hooks
         if (active_ == this) active_ = nullptr;
         localThing_.store(nullptr, std::memory_order_release);
         remoteDefinition_.store(nullptr, std::memory_order_release);
+        remoteChildDefinition_.store(nullptr, std::memory_order_release);
         originalGraphic_ = nullptr;
         originalModifiers_ = nullptr;
         originalBodyParts_ = nullptr;
@@ -212,9 +214,9 @@ namespace fable::game::hero_pawn::appearance::hooks
         diagnostics_ = {};
     }
 
-    void TheresaAppearanceHook::RegisterRemoteDefinition(void* definition) noexcept
+    void TheresaAppearanceHook::RegisterRemoteDefinition(void* definition, bool childhood) noexcept
     {
-        remoteDefinition_.store(definition, std::memory_order_release);
+        (childhood?remoteChildDefinition_:remoteDefinition_).store(definition, std::memory_order_release);
     }
 
     bool TheresaAppearanceHook::UsesTheresaPresentation(void* thing) noexcept
@@ -228,8 +230,9 @@ namespace fable::game::hero_pawn::appearance::hooks
                     reinterpret_cast<std::uintptr_t>(active_->module_) + PlayerVtableRva)
                 return true;
             void* remote = remoteDefinition_.load(std::memory_order_acquire);
-            return remote != nullptr &&
-                *reinterpret_cast<void* const*>(bytes + 0x100) == remote;
+            void* child=remoteChildDefinition_.load(std::memory_order_acquire);
+            void* definition=*reinterpret_cast<void* const*>(bytes + 0x100);
+            return (remote && definition==remote) || (child && definition==child);
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }

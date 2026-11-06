@@ -44,6 +44,8 @@ namespace fable::game::entity::persistence
             void* thing,
             void* unused,
             void* reader);
+        static bool __fastcall GamePersistenceForSave(void* thing, void*);
+        static bool __fastcall LevelPersistenceForSave(void* thing, void*);
         bool InstallDetour(
             std::uint8_t* target,
             void* replacement,

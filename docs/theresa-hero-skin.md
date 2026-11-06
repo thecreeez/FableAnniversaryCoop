@@ -1,5 +1,8 @@
 # Theresa render skin driven by Hero
 
+Owner accepted the model; committed78533f2. Current follow-ups:
+[clothes, scenes, childhood and saves](theresa-followups.md).
+
 This supersedes the whole-Sister graphic substitution and Sister weapon
 correction from tasks28–30. The owner observed a local T-pose and Sister
 animations on the observing host. The new implementation retains the local

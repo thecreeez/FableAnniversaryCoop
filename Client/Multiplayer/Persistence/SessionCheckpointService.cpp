@@ -570,6 +570,15 @@ namespace fable::multiplayer::persistence
             {
                 if (phase_ != Phase::Idle) continue;
                 pending_ = {}; pending_.ticket = t; phase_ = Phase::SaveFile; phaseSince_ = now;
+                // Generation/map authority comes from the host; the serialized
+                // Hero placement belongs to THIS guest, not the host's marker.
+                if (hero.CurrentState() && hero.MapName()==t.region)
+                {
+                    pending_.ticket.position=hero.CurrentState()->position;
+                    pending_.ticket.facing=hero.CurrentState()->facing;
+                    diagnostics_.Event("MultiplayerGuestCheckpointPlacementCaptured",
+                        "guest save retains its own position/facing; checkpoint generation remains host-owned");
+                }
                 worldFence_.store(t.rollback, std::memory_order_release);
                 fileOriginalStamp_ = 0; fileStableSince_ = 0; nextRetryAt_ = 0;
             }

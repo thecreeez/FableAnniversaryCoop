@@ -95,6 +95,8 @@ namespace fable::multiplayer::replication
         [[nodiscard]] bool HasDepartedNativeWorld(
             const entities::LiveEntityRegistry& liveEntities) noexcept;
         [[nodiscard]] bool WorldIsCurrent() const;
+        void PruneRestoredPlayerPresentations(const entities::LiveEntityRegistry& liveEntities);
+        bool SeparateAfterCutscene(const PlayerState& host);
         void BeginWorldTransition() noexcept;
         void BeginCheckpointReload() noexcept;
         [[nodiscard]] bool ConsumeCompletedWorldTransition() noexcept;
@@ -176,6 +178,7 @@ namespace fable::multiplayer::replication
         bool equipmentReady_ = false;
         bool nativePresenceObserved_ = false;
         bool morphSelfTest_ = false;
+        std::uint64_t orphanScanRevision_ = 0;
         bool graphicRuntimeReported_ = false;
         bool transitionActive_ = false;
         bool transitionCompleted_ = false;

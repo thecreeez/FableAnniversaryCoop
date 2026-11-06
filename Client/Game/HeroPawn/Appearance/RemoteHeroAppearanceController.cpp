@@ -98,7 +98,7 @@ namespace fable::game::hero_pawn::appearance
             return RemoteHeroAppearanceResult::Pending;
         }
         resolutionPendingReported_ = false;
-        hooks::TheresaHeroSkin::Update(nativeHero_);
+        hooks::TheresaHeroSkin::Update(nativeHero_,morph.childhood);
         if (!graphicRuntimeReported_)
         {
             graphicRuntimeReported_ = ReportHeroSkeletalPresentation(

@@ -240,9 +240,14 @@ namespace fable::game::cutscene
 
     bool CutsceneObserver::ReadInCutscene(bool& value) const noexcept
     {
+        return ReadNativeState(gameModule_, value);
+    }
+
+    bool CutsceneObserver::ReadNativeState(HMODULE module, bool& value) noexcept
+    {
         value = false;
-        if (gameModule_ == nullptr) return false;
-        const auto base = reinterpret_cast<std::uintptr_t>(gameModule_);
+        if (module == nullptr) return false;
+        const auto base = reinterpret_cast<std::uintptr_t>(module);
         __try
         {
             if (*reinterpret_cast<void* const*>(base + HudSingletonRva) == nullptr) return false;

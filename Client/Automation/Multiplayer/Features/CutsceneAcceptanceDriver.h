@@ -123,6 +123,8 @@ namespace fable::automation::multiplayer::features
         std::uint16_t lastHostMap_ = 0;
         std::uint64_t promptSeenAt_ = 0;
         bool sawCutscene_ = false;
+        bool theresaHiddenSeen_ = false, theresaOverlapPlaced_ = false;
+        std::uint64_t theresaSceneEndedAt_ = 0;
         bool skipRequestedForTest_ = false;
         std::uint64_t waspUid_ = 0;
         std::uint64_t nextWaspTeleportAt_ = 0;

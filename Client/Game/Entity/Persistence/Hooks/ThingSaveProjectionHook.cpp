@@ -6,9 +6,19 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <intrin.h>
 
 namespace
 {
+    // Manager collection tests these before creating the entity record. Base
+    // CThing text serialization is too late to exclude a derived NPC record.
+    constexpr std::uintptr_t GamePersistenceRva=0x01B2B610;
+    constexpr std::uintptr_t LevelPersistenceRva=0x01B2B640;
+    fable::core::hooking::InlineHook gamePersistencePatch;
+    fable::core::hooking::InlineHook levelPersistencePatch;
+    using PersistenceTest=bool(__thiscall*)(void*);
+    PersistenceTest originalGamePersistence=nullptr;
+    PersistenceTest originalLevelPersistence=nullptr;
     struct ThingIdentity final
     {
         std::uint64_t uid = 0;
@@ -70,6 +80,16 @@ namespace
             identity = {};
             return false;
         }
+    }
+
+    bool IsRemoteSaveCandidate(void* thing,std::uintptr_t caller) noexcept
+    {
+        const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+        const auto rva=caller-base;
+        if (rva<0x01B51F80 || rva>=0x01B52540) return false;
+        ThingIdentity identity;
+        return ReadThingIdentity(thing,identity) &&
+            !std::strcmp(identity.scriptName.data(),"SCRIPT_NAME_ALBION_TOGETHER_REMOTE_PLAYER");
     }
 }
 
@@ -147,6 +167,19 @@ namespace fable::game::entity::persistence
         originalLoad_ =
             reinterpret_cast<native::ThingSaveFunctions::LoadPointer>(
                 loadDetour_.Original());
+        const auto base=reinterpret_cast<std::uintptr_t>(gameModule);
+        const std::uint8_t gameBytes[]={0x56,0x8B,0xF1,0x8B,0x06};
+        const std::uint8_t levelBytes[]={0x51,0x56,0x8B,0xF1,0x8B,0x06};
+        if (!gamePersistencePatch.Install(reinterpret_cast<void*>(base+GamePersistenceRva),gameBytes,
+                sizeof(gameBytes),reinterpret_cast<void*>(&GamePersistenceForSave),sizeof(gameBytes)))
+        { Shutdown(); return false; }
+        originalGamePersistence=reinterpret_cast<PersistenceTest>(gamePersistencePatch.Original());
+        if (!levelPersistencePatch.Install(reinterpret_cast<void*>(base+LevelPersistenceRva),levelBytes,
+                sizeof(levelBytes),reinterpret_cast<void*>(&LevelPersistenceForSave),sizeof(levelBytes)))
+        { Shutdown(); return false; }
+        originalLevelPersistence=reinterpret_cast<PersistenceTest>(levelPersistencePatch.Original());
+        diagnostics_.Event("MultiplayerRemotePlayerSaveEligibilityReady",
+            "manager collection excludes complete remote-player records; runtime persistence/culling unchanged");
 
         char detail[384] = {};
         std::snprintf(
@@ -164,6 +197,9 @@ namespace fable::game::entity::persistence
 
     void ThingSaveProjectionHook::Shutdown() noexcept
     {
+        if (!levelPersistencePatch.Shutdown() || !gamePersistencePatch.Shutdown()) return;
+        originalLevelPersistence=nullptr;
+        originalGamePersistence=nullptr;
         bool allRestored = true;
         allRestored = RestoreDetour(loadDetour_) && allRestored;
         allRestored = RestoreDetour(saveDetour_) && allRestored;
@@ -193,6 +229,22 @@ namespace fable::game::entity::persistence
         return active_ == this && saveDetour_.IsInstalled() &&
             loadDetour_.IsInstalled() &&
             originalSave_ != nullptr && originalLoad_ != nullptr;
+    }
+
+    bool __fastcall ThingSaveProjectionHook::GamePersistenceForSave(void* thing,void*)
+    {
+        if (IsRemoteSaveCandidate(thing,reinterpret_cast<std::uintptr_t>(_ReturnAddress())))
+        {
+            if (active_) active_->diagnostics_.Event("MultiplayerRemotePlayerSaveExcluded","game collection excludes process-local player presentation before record creation");
+            return false;
+        }
+        return originalGamePersistence && originalGamePersistence(thing);
+    }
+
+    bool __fastcall ThingSaveProjectionHook::LevelPersistenceForSave(void* thing,void*)
+    {
+        if (IsRemoteSaveCandidate(thing,reinterpret_cast<std::uintptr_t>(_ReturnAddress()))) return false;
+        return originalLevelPersistence && originalLevelPersistence(thing);
     }
 
     void __fastcall ThingSaveProjectionHook::SaveProjected(

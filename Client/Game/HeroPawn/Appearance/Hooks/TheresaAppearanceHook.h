@@ -18,7 +18,7 @@ namespace fable::game::hero_pawn::appearance::hooks
     public:
         bool Install(HMODULE module, bool guest, const core::Diagnostics& diagnostics) noexcept;
         void Shutdown() noexcept;
-        static void RegisterRemoteDefinition(void* definition) noexcept;
+        static void RegisterRemoteDefinition(void* definition, bool childhood=false) noexcept;
         [[nodiscard]] static bool UsesTheresaPresentation(void* thing) noexcept;
 
     private:
@@ -31,6 +31,7 @@ namespace fable::game::hero_pawn::appearance::hooks
 
         static TheresaAppearanceHook* active_;
         static std::atomic<void*> remoteDefinition_;
+        static std::atomic<void*> remoteChildDefinition_;
         static std::atomic<void*> localThing_;
         HMODULE module_ = nullptr;
         core::Diagnostics diagnostics_;

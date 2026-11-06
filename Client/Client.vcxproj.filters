@@ -197,6 +197,8 @@
     <ClCompile Include="Automation\FixtureDocuments\Native\DocumentsFolderImport.cpp"><Filter>Automation\FixtureDocuments\Native</Filter></ClCompile>
     <ClCompile Include="Automation\LocalInstance\Hooks\ForegroundWindowHook.cpp"><Filter>Automation\LocalInstance\Hooks</Filter></ClCompile>
     <ClCompile Include="Automation\LocalInstance\MapTransitionAcceptanceDriver.cpp"><Filter>Automation\LocalInstance</Filter></ClCompile>
+    <ClCompile Include="Automation\LocalInstance\ChildhoodAcceptanceDriver.cpp"><Filter>Automation\LocalInstance</Filter></ClCompile>
+    <ClCompile Include="Automation\Multiplayer\Features\TheresaAcceptanceDriver.cpp"><Filter>Automation\Multiplayer\Features</Filter></ClCompile>
     <ClCompile Include="Automation\LocalInstance\Hooks\UnrealSingletonHook.cpp"><Filter>Automation\LocalInstance\Hooks</Filter></ClCompile>
     <ClCompile Include="Automation\LocalInstance\Native\ForegroundWindowImport.cpp"><Filter>Automation\LocalInstance\Native</Filter></ClCompile>
     <ClCompile Include="Automation\LocalInstance\Native\UnrealSingletonImport.cpp"><Filter>Automation\LocalInstance\Native</Filter></ClCompile>
@@ -497,6 +499,8 @@
     <ClInclude Include="Automation\FixtureDocuments\Native\DocumentsFolderImport.h"><Filter>Automation\FixtureDocuments\Native</Filter></ClInclude>
     <ClInclude Include="Automation\LocalInstance\Hooks\ForegroundWindowHook.h"><Filter>Automation\LocalInstance\Hooks</Filter></ClInclude>
     <ClInclude Include="Automation\LocalInstance\MapTransitionAcceptanceDriver.h"><Filter>Automation\LocalInstance</Filter></ClInclude>
+    <ClInclude Include="Automation\LocalInstance\ChildhoodAcceptanceDriver.h"><Filter>Automation\LocalInstance</Filter></ClInclude>
+    <ClInclude Include="Automation\Multiplayer\Features\TheresaAcceptanceDriver.h"><Filter>Automation\Multiplayer\Features</Filter></ClInclude>
     <ClInclude Include="Automation\LocalInstance\Hooks\UnrealSingletonHook.h"><Filter>Automation\LocalInstance\Hooks</Filter></ClInclude>
     <ClInclude Include="Automation\LocalInstance\Native\ForegroundWindowImport.h"><Filter>Automation\LocalInstance\Native</Filter></ClInclude>
     <ClInclude Include="Automation\LocalInstance\Native\UnrealSingletonImport.h"><Filter>Automation\LocalInstance\Native</Filter></ClInclude>

@@ -30,6 +30,7 @@ namespace fable::game::cutscene
         void Process(const char* mapName, float x, float y, float z) noexcept;
 
         [[nodiscard]] bool IsInCutscene() const noexcept { return inCutscene_; }
+        static bool ReadNativeState(HMODULE module, bool& value) noexcept;
 
         // Called on the quest-script thread before a retail cutscene starts;
         // it may block (holding only that script) and returns once the

@@ -3,6 +3,7 @@
 #include "../../Diagnostics/EventLog.h"
 
 #include <iostream>
+#include <Windows.h>
 
 namespace fable::launcher::multiplayer
 {
@@ -24,11 +25,18 @@ int RunBasicScenario(MultiplayerTestSession& session)
             diagnostics::EventWasReported(
                 diagnostics::ReadEventFile(peers.guest().events),
                 "MultiplayerRemoteAvatarWalking"));
+    const bool childhood = GetEnvironmentVariableW(L"ALBIONTOGETHER_CHILDHOOD_TEST", nullptr, 0) != 0;
+    const char* skin = childhood
+        ? "attached=true stage=attached skin_bones=98 driver_bones=91 map_count=98"
+        : "attached=true stage=attached skin_bones=80 driver_bones=91 map_count=80";
     const bool appearancesApplied = nativeAnimation &&
-        peers.WaitEvent(peers.host(), "MultiplayerRemoteAppearanceModifiersApplied") &&
+        peers.WaitEventDetail(peers.host(), "MultiplayerTheresaHeroSkinAttached",
+            skin) &&
+        peers.WaitEventDetail(peers.guest(), "MultiplayerTheresaHeroSkinAttached",
+            skin) &&
+        (childhood || (peers.WaitEvent(peers.host(), "MultiplayerRemoteClothingApplied") &&
         peers.WaitEvent(peers.guest(), "MultiplayerRemoteAppearanceModifiersApplied") &&
-        peers.WaitEvent(peers.host(), "MultiplayerRemoteBoneScalesApplied") &&
-        peers.WaitEvent(peers.guest(), "MultiplayerRemoteBoneScalesApplied");
+        peers.WaitEvent(peers.guest(), "MultiplayerRemoteBoneScalesApplied")));
     const bool guestStopped = session.Shutdown();
     if (!nativeAnimation || !appearancesApplied || !guestStopped)
     {
@@ -36,7 +44,7 @@ int RunBasicScenario(MultiplayerTestSession& session)
         return 1;
     }
     std::wcout
-        << L"Multiplayer structural acceptance passed: both remote definitions were created from the safe dispatch context, each unfocused peer applied non-zero remote physics movement without focus handoff, the shared focused native-animation path remained live, and each reconciled selected-save appearance. This command does not claim pixel-level visibility.\n"
+        << L"Multiplayer structural acceptance passed: both remote definitions were created, both peers applied remote movement, native animation remained live, and both observers attached the correct Sister mesh to the native Hero driver with a complete bone map. This command does not claim pixel-level visibility.\n"
         << L"State root: " << session.context().sessionRoot.wstring() << L"\n";
     return 0;
 }

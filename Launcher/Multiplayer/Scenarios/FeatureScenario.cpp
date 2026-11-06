@@ -12,6 +12,20 @@ namespace fable::launcher::multiplayer
         PeerHarness& peers = session.peers();
         Peer& host = peers.host();
         Peer& guest = peers.guest();
+        wchar_t theresaMode[32] = {};
+        if (GetEnvironmentVariableW(L"ALBIONTOGETHER_THERESA_TEST", theresaMode, 32))
+        {
+            const bool checkpoint = std::wstring(theresaMode) == L"checkpoint";
+            const char* finalEvent = checkpoint ? "TheresaCheckpointRestoredVerified" : "TheresaOutfitRestoredVerified";
+            bool okay = checkpoint || (peers.WaitEvent(host,"TheresaOutfitChangedVerified") &&
+                peers.WaitEvent(guest,"TheresaOutfitChangedVerified"));
+            okay = okay && peers.WaitEvent(host,finalEvent) && peers.WaitEvent(guest,finalEvent) &&
+                peers.IsResponsive(host) && peers.IsResponsive(guest);
+            const bool stopped = session.Shutdown();
+            std::wcout << L"Multiplayer Theresa acceptance " << (okay && stopped ? L"passed" : L"failed")
+                << L": " << theresaMode << L".\nState root: " << session.context().sessionRoot.wstring() << L"\n";
+            return okay && stopped ? 0 : 1;
+        }
 
         if (GetEnvironmentVariableW(L"ALBIONTOGETHER_SHARED_WORLD_TEST", nullptr, 0))
         {

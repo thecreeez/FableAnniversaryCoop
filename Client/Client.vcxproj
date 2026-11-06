@@ -73,6 +73,8 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClCompile Include="Automation\FixtureDocuments\Native\DocumentsFolderImport.cpp" />
     <ClCompile Include="Automation\LocalInstance\Hooks\ForegroundWindowHook.cpp" />
     <ClCompile Include="Automation\LocalInstance\MapTransitionAcceptanceDriver.cpp" />
+    <ClCompile Include="Automation\LocalInstance\ChildhoodAcceptanceDriver.cpp" />
+    <ClCompile Include="Automation\Multiplayer\Features\TheresaAcceptanceDriver.cpp" />
     <ClCompile Include="Automation\LocalInstance\Hooks\UnrealSingletonHook.cpp" />
     <ClCompile Include="Automation\LocalInstance\Native\ForegroundWindowImport.cpp" />
     <ClCompile Include="Automation\LocalInstance\Native\UnrealSingletonImport.cpp" />
@@ -384,6 +386,8 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClInclude Include="Automation\FixtureDocuments\Native\DocumentsFolderImport.h" />
     <ClInclude Include="Automation\LocalInstance\Hooks\ForegroundWindowHook.h" />
     <ClInclude Include="Automation\LocalInstance\MapTransitionAcceptanceDriver.h" />
+    <ClInclude Include="Automation\LocalInstance\ChildhoodAcceptanceDriver.h" />
+    <ClInclude Include="Automation\Multiplayer\Features\TheresaAcceptanceDriver.h" />
     <ClInclude Include="Automation\LocalInstance\Hooks\UnrealSingletonHook.h" />
     <ClInclude Include="Automation\LocalInstance\Native\ForegroundWindowImport.h" />
     <ClInclude Include="Automation\LocalInstance\Native\UnrealSingletonImport.h" />

@@ -2,6 +2,7 @@
 #include "Game/Native/ScriptTypes.h"
 #include "Game/Quest/Sync/QuestScreenHook.h"
 #include "CutsceneAcceptanceDriver.h"
+#include "Game/HeroPawn/Appearance/Hooks/TheresaHeroSkin.h"
 
 #include "Automation/Multiplayer/Transition/NativeRegionRoute.h"
 #include "Game/Entity/Entity.h"
@@ -153,6 +154,8 @@ namespace fable::automation::multiplayer::features
         swarmUids_.clear();
         swarmSelected_ = false;
         lastHostMap_ = 0;
+        theresaHiddenSeen_=theresaOverlapPlaced_=false;
+        theresaSceneEndedAt_=0;
         phase_.store(Phase::WaitingForWorld, std::memory_order_release);
     }
 
@@ -530,6 +533,18 @@ namespace fable::automation::multiplayer::features
         case Phase::AwaitCutsceneEnd:
         {
             const bool inCutscene = contexts.world.cutscenes.IsInCutscene();
+            const bool theresaScene = GetEnvironmentVariableW(L"ALBIONTOGETHER_THERESA_SCENE_TEST", nullptr, 0)!=0;
+            void* theresa = host_?nullptr:contexts.players.localHero.NativeHero();
+            if (theresaScene && host_)
+                for (const auto& peer:contexts.transport.remotePlayerChannels.Snapshots())
+                    if (peer.state.role==::fable::multiplayer::PeerRole::Guest)
+                        theresa=contexts.players.playerCombatants.FindCreature(peer.state.actorId);
+            if (theresaScene && inCutscene && !theresaHiddenSeen_ &&
+                game::hero_pawn::appearance::hooks::TheresaHeroSkin::InspectForTest(theresa,true))
+            {
+                theresaHiddenSeen_=true;
+                diagnostics_.Event("TheresaSceneHiddenVerified","actual Sister primitive hidden; native Hero animation driver remains ticking");
+            }
             if (inCutscene) sawCutscene_ = true;
             if (!host_ && inCutscene && !skipRequestedForTest_ && now - phaseStartedAt_ > 6000 &&
                 contexts.world.cutscenes.RequestSkip("CS_WASPBOSS_INTRO", true))
@@ -538,6 +553,24 @@ namespace fable::automation::multiplayer::features
                 diagnostics_.Event("CutsceneAcceptanceGuestSkipRequested", "native input event39 requested");
             }
             if (!sawCutscene_ || inCutscene) return false;
+            if (theresaScene)
+            {
+                if (!theresaHiddenSeen_) { Fail("theresa-not-hidden-during-native-scene"); return false; }
+                if (!theresaSceneEndedAt_) theresaSceneEndedAt_=now;
+                if (!host_ && !theresaOverlapPlaced_)
+                {
+                    std::uint64_t actor=0; float position[3]={};
+                    if (!RemoteHost(actor,position) || !TeleportLocalHero(position,"theresa-overlap-after-scene")) return false;
+                    theresaOverlapPlaced_=true;
+                    return false;
+                }
+                if (now-theresaSceneEndedAt_<1500 ||
+                    !game::hero_pawn::appearance::hooks::TheresaHeroSkin::InspectForTest(theresa,false)) return false;
+                if (!host_ && DistanceToRemote()<1.6f) return false;
+                diagnostics_.Event("TheresaSceneRestoredVerified",host_?"actual remote Sister visible after scene":"actual local Sister visible; deliberately overlapping guest separated by runtime after scene");
+                Enter(Phase::Done,now);
+                return false;
+            }
             if (now - phaseStartedAt_ < SettleMilliseconds) return false;
             diagnostics_.Event("CutsceneAcceptanceCutsceneOver", host_ ? "role=host" : "role=guest");
             players_->SetHealth(players_->GetMaximumHealth());

@@ -193,7 +193,7 @@ namespace fable::game::hero_pawn::appearance::native
             {
                 __leave;
             }
-            if (childhood && !theresa)
+            if (childhood)
             {
                 CharString childName;
                 constructString(&childName, "CREATURE_HERO_CHILD", -1);
@@ -319,7 +319,7 @@ namespace fable::game::hero_pawn::appearance::native
                 kEyeGraphicSize);
 
             definition_ = clone;
-            if (theresa) hooks::TheresaAppearanceHook::RegisterRemoteDefinition(definition_);
+            if (theresa) hooks::TheresaAppearanceHook::RegisterRemoteDefinition(definition_,childhood);
             retailBaseIndex_ = rivalIndex;
             clone = nullptr;
             ready = true;

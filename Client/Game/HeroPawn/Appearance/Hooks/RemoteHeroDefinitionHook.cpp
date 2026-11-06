@@ -135,6 +135,7 @@ namespace fable::game::hero_pawn::appearance::hooks
         runtimeDefinition_.AbandonForProcessLifetime();
         childDefinition_.AbandonForProcessLifetime();
         theresaDefinition_.AbandonForProcessLifetime();
+        theresaChildDefinition_.AbandonForProcessLifetime();
         armedDefinition_ = nullptr;
         originalLookup_ = nullptr;
         originalApply_ = nullptr;
@@ -147,7 +148,7 @@ namespace fable::game::hero_pawn::appearance::hooks
 
     RemoteHeroDefinitionHook::ArmToken RemoteHeroDefinitionHook::Arm(bool childhood, bool theresa) noexcept
     {
-        auto& definition = theresa ? theresaDefinition_ : childhood ? childDefinition_ : runtimeDefinition_;
+        auto& definition = theresa ? (childhood?theresaChildDefinition_:theresaDefinition_) : childhood ? childDefinition_ : runtimeDefinition_;
         if (!IsInstalled() ||
             !definition.Ensure(gameModule_, originalLookup_, diagnostics_, childhood, theresa))
         {
@@ -258,7 +259,7 @@ namespace fable::game::hero_pawn::appearance::hooks
         }
         hook->originalApply_(thing, definition);
         if ((definition == hook->runtimeDefinition_.Get() || definition == hook->childDefinition_.Get() ||
-                definition == hook->theresaDefinition_.Get()) &&
+                definition == hook->theresaDefinition_.Get() || definition == hook->theresaChildDefinition_.Get()) &&
             hook->IsActiveOnCurrentThread())
         {
             (void)hook->ProvisionHeroComponents(thing);

@@ -25,6 +25,9 @@ namespace fable::multiplayer
         ignoredDepartingEntityMapId_ = 0;
         sourceMapFinalDrainRequired_ = false;
         reportedRemotePlayerCount_ = 0;
+        cutsceneHidden_=false;
+        separateAfter_=0;
+        game::hero_pawn::appearance::hooks::TheresaHeroSkin::SetCutsceneHidden(false);
     }
 
     bool PresentationLifecycleCoordinator::Process(MultiplayerRuntimeGraph& graph)
@@ -76,6 +79,8 @@ namespace fable::multiplayer
             // Hide remote Heroes for the length of a local cutscene; re-assert
             // every frame so a presentation rebuilt mid-cutscene is hidden too.
             const bool inCutscene = world.cutscenes.IsInCutscene();
+            game::hero_pawn::appearance::hooks::TheresaHeroSkin::SetCutsceneHidden(inCutscene);
+            if (!inCutscene && cutsceneHidden_) separateAfter_=GetTickCount64()+200;
             if (inCutscene || cutsceneHidden_)
             {
                 players.remotePlayers.SetCutsceneHidden(inCutscene);
@@ -91,6 +96,14 @@ namespace fable::multiplayer
         if (!world.cutsceneSync.Process())
         {
             diagnostics.Event("ClientFailed", "multiplayer-cutscene-sync");
+        }
+        if (separateAfter_ && !world.cutscenes.IsInCutscene() && GetTickCount64()>=separateAfter_)
+        {
+            for (const auto& peer:transport.remotePlayerChannels.Snapshots())
+                if (peer.state.role==PeerRole::Host && GetTickCount64()-peer.receivedAt<2000 &&
+                    players.localHero.SeparateAfterCutscene(peer.state))
+                { separateAfter_=0; break; }
+            if (separateAfter_ && GetTickCount64()>separateAfter_+3000) separateAfter_=0;
         }
         if (!world.chestSync.Process())
         {
@@ -122,6 +135,7 @@ namespace fable::multiplayer
         };
 
         if (!entityPresence.ProcessPending()) diagnostics.Event("ClientFailed", "multiplayer-entity-presence-processing");
+        localHero.PruneRestoredPlayerPresentations(entityPresence.LiveEntities());
         if (!world.mapTransitionAuthority.Process()) diagnostics.Event("MultiplayerMapPreparationDeferred", "ordered transport could not yet accept the native destination preparation");
         std::uint16_t departingMapId = 0;
         const bool connectedExitDeparted =

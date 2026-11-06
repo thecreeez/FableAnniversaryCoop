@@ -83,6 +83,14 @@ namespace fable::launcher::automation
             const std::filesystem::path& eventPath,
             const std::string& events)
         {
+            if (GetEnvironmentVariableW(L"ALBIONTOGETHER_CHILDHOOD_TEST", nullptr, 0))
+            {
+                if (!fable::launcher::diagnostics::EventWasReported(events, "ChildhoodAcceptancePassed"))
+                    return ScenarioProgress::Pending;
+                return FinishScenario(game, eventPath,
+                    L"Automation passed: real childhood intro quest, child Hero, input movement and native save observed.",
+                    L"Automation failed: childhood assertions passed but shutdown failed.");
+            }
             if (!fable::launcher::diagnostics::EventWasReported(
                     events, "HeroReady"))
             {
@@ -256,10 +264,39 @@ namespace fable::launcher::automation
         const ULONGLONG deadline = GetTickCount64() +
             static_cast<ULONGLONG>(timeoutSeconds) * 1'000;
         AppearanceInputState inputState;
+        ScopedSyntheticKey childhoodMove('W');
+        ULONGLONG childhoodInputAt = 0;
+        const bool childhood = scenario == L"bootstrap_fixture_probe" &&
+            GetEnvironmentVariableW(L"ALBIONTOGETHER_CHILDHOOD_TEST", nullptr, 0);
         for (;;)
         {
             const std::string events =
                 fable::launcher::diagnostics::ReadEventFile(eventPath);
+            if (childhood && fable::launcher::diagnostics::EventWasReported(events, "ChildhoodStoryReady"))
+            {
+                const ULONGLONG now = GetTickCount64();
+                const bool moved = fable::launcher::diagnostics::EventWasReported(events, "ChildhoodStoryMovementVerified");
+                if (childhoodMove.down() && (moved || now - childhoodInputAt >= 2000))
+                {
+                    childhoodMove.Release();
+                    childhoodInputAt = now;
+                }
+                else if (!moved && !childhoodMove.down() && now - childhoodInputAt >= 2000)
+                {
+                    const HWND window = FindMainWindow(game.processId);
+                    if (window) SetForegroundWindow(window);
+                    if (GetForegroundWindow() == window && childhoodMove.Press())
+                    {
+                        childhoodInputAt = now;
+                        wchar_t inputFile[MAX_PATH]={};
+                        if (GetEnvironmentVariableW(L"ALBIONTOGETHER_CHILDHOOD_INPUT_FILE",inputFile,MAX_PATH))
+                        {
+                            HANDLE file=CreateFileW(inputFile,GENERIC_WRITE,FILE_SHARE_READ,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+                            if (file!=INVALID_HANDLE_VALUE) CloseHandle(file);
+                        }
+                    }
+                }
+            }
             if (scenario == L"appearance_cycle" &&
                 !DriveAppearanceInput(game, events, inputState))
             {

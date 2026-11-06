@@ -1,6 +1,7 @@
 #include "TheresaHeroSkin.h"
 #include "TheresaAppearanceHook.h"
 #include "Game/HeroPawn/Appearance/Native/HeroMorphComponent.h"
+#include "Game/HeroPawn/Appearance/Native/HeroClothingComponent.h"
 
 #include <cstdio>
 #include <cstring>
@@ -35,6 +36,12 @@ namespace
     constexpr char SkinName[] = "wesister_01.MESH_SISTER_01";
     constexpr wchar_t SkinObjectPath[] = L"wesister_01.MESH_SISTER_01";
     constexpr wchar_t SkinPackage[] = L"WeSISTER_01_SF.upk";
+    constexpr char ChildSkinName[]="weyoung_sister_01.MESH_YOUNG_SISTER_01";
+    constexpr wchar_t ChildSkinObjectPath[]=L"weyoung_sister_01.MESH_YOUNG_SISTER_01";
+    constexpr wchar_t ChildSkinPackage[]=L"WeYOUNG_SISTER_01_SF.upk";
+    constexpr std::uintptr_t CommandAllocateRva=0x01C52620;
+    constexpr std::uintptr_t CommandSubmitRva=0x01C52B90;
+    std::atomic_bool cutsceneHidden{false};
 
     template<class T> T& Field(void* object, std::size_t offset)
     {
@@ -45,8 +52,8 @@ namespace
     {
         __try
         {
-            return command && std::memcmp(static_cast<char*>(command)+0x20,
-                SkinName,sizeof(SkinName))==0;
+            return command && (std::strcmp(static_cast<char*>(command)+0x20,SkinName)==0 ||
+                std::strcmp(static_cast<char*>(command)+0x20,ChildSkinName)==0);
         }
         __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
@@ -189,7 +196,7 @@ namespace fable::game::hero_pawn::appearance::hooks
             }
     }
 
-    void TheresaHeroSkin::Update(void* thing) noexcept
+    void TheresaHeroSkin::Update(void* thing, bool childhood) noexcept
     {
         auto* hook=active_;
         if (!hook || !TheresaAppearanceHook::UsesTheresaPresentation(thing)) return;
@@ -211,6 +218,8 @@ namespace fable::game::hero_pawn::appearance::hooks
                 candidate.master.store(resolved.skeletalMeshComponent);
                 candidate.skin.store(nullptr);
                 candidate.queued.store(false);
+                candidate.childhood.store(childhood);
+                candidate.visualKey.store(0);
                 candidate.graphic.store(resolved.graphic,std::memory_order_release);
                 entry=&candidate;
                 break;
@@ -224,6 +233,30 @@ namespace fable::game::hero_pawn::appearance::hooks
             // Reattach to the current Hero driver without dereferencing skin.
             entry->skin.store(nullptr);
             entry->queued.store(false);
+            entry->visualKey.store(0);
+        }
+        if (skin && ContainsSkin(resolved.pawn,skin))
+        {
+            HeroClothingState clothing;
+            // Childhood can have no clothing inventory. Cutscene visibility
+            // must still update for that presentation.
+            const bool capturedClothing=native::HeroClothingComponent::Capture(thing,clothing);
+            {
+                std::uint64_t key=cutsceneHidden.load()?2:1;
+                if (capturedClothing)
+                    for (auto id:clothing.definitionIndices) key=(key^static_cast<std::uint32_t>(id))*1099511628211ull;
+                if (entry->visualKey.exchange(key)!=key)
+                {
+                    const auto base=reinterpret_cast<std::uintptr_t>(hook->module_);
+                    using Allocate=void*(__cdecl*)(unsigned int,unsigned int);
+                    using Submit=void(__cdecl*)(void(__cdecl*)(void*),void*);
+                    void* command=reinterpret_cast<Allocate>(base+CommandAllocateRva)(0x20,4);
+                    Field<void*>(command,0)=resolved.graphic;
+                    reinterpret_cast<Submit>(base+CommandSubmitRva)(&RefreshVisual,command);
+                    hook->diagnostics_.Event("MultiplayerTheresaClothingOverlayQueued",
+                        "native synchronized equipped clothing remains on Hero driver; render visibility refreshed");
+                }
+            }
         }
         // Submit only once for a live graphic. Native streaming owns retries;
         // repeated submissions could create duplicate components/slot races.
@@ -231,9 +264,10 @@ namespace fable::game::hero_pawn::appearance::hooks
         if (!entry->queued.compare_exchange_strong(expected,true)) return;
         const auto base=reinterpret_cast<std::uintptr_t>(hook->module_);
         using Submit=void(__stdcall*)(void*,const char*,int);
-        reinterpret_cast<Submit>(base+SubmitMeshRva)(resolved.graphic,SkinName,0);
+        reinterpret_cast<Submit>(base+SubmitMeshRva)(resolved.graphic,entry->childhood.load()?ChildSkinName:SkinName,0);
         hook->diagnostics_.Event("MultiplayerTheresaHeroSkinQueued",
-            "mesh=wesister_01.MESH_SISTER_01 package=WeSISTER_01_SF.upk driver=Hero slot=append-on-execution fit=unverified");
+            entry->childhood.load()?"mesh=MESH_YOUNG_SISTER_01 driver=child-Hero fit=unverified":
+                "mesh=MESH_SISTER_01 driver=Hero fit=unverified");
     }
 
     bool TheresaHeroSkin::FixMap(void* mesh) noexcept
@@ -248,16 +282,18 @@ namespace fable::game::hero_pawn::appearance::hooks
             if (!entry) return false;
             void* asset=Field<void*>(mesh,0x1E4);
             void* heroAsset=Field<void*>(master,0x1E4);
-            if (!asset || !heroAsset || Field<int>(asset,0x98)!=80 ||
-                Field<int>(heroAsset,0x98)!=91 || Field<int>(mesh,0x2A4)!=80) return false;
+            if (!asset || !heroAsset) return false;
+            const int boneCount=Field<int>(asset,0x98);
+            if ((boneCount!=80 && boneCount!=98) || Field<int>(heroAsset,0x98)!=91 ||
+                Field<int>(mesh,0x2A4)!=boneCount) return false;
             auto* bones=Field<std::uint8_t*>(asset,0x94);
             auto* heroBones=Field<std::uint8_t*>(heroAsset,0x94);
             auto* map=Field<int*>(mesh,0x2A0);
             if (!bones || !heroBones || !map) return false;
-            int resolved[80]={};
+            int resolved[128]={};
             unsigned int common=0;
             unsigned int fallback=0;
-            for (int i=0;i<80;++i)
+            for (int i=0;i<boneCount;++i)
             {
                 resolved[i]=-1;
                 for (int j=0;j<91;++j)
@@ -273,8 +309,8 @@ namespace fable::game::hero_pawn::appearance::hooks
                 resolved[i]=resolved[parent];
                 ++fallback;
             }
-            if (common!=77 || fallback!=3) return false;
-            std::memcpy(map,resolved,sizeof(resolved));
+            if (common!=77 || fallback!=static_cast<unsigned int>(boneCount-77)) return false;
+            std::memcpy(map,resolved,boneCount*sizeof(int));
             return true;
         }
         __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -286,6 +322,64 @@ namespace fable::game::hero_pawn::appearance::hooks
         if (!hook || !hook->originalMap_) return;
         hook->originalMap_(mesh);
         hook->FixMap(mesh);
+    }
+
+    void TheresaHeroSkin::SetCutsceneHidden(bool hidden) noexcept
+    {
+        cutsceneHidden.store(hidden,std::memory_order_release);
+    }
+
+    bool TheresaHeroSkin::InspectForTest(void* thing, bool hidden) noexcept
+    {
+        auto* hook=active_;
+        if (!hook || !thing) return false;
+        __try
+        {
+            for (auto& entry:hook->entries_)
+            {
+                if (entry.thing.load()!=thing) continue;
+                void* graphic=entry.graphic.load();
+                void* skin=entry.skin.load();
+                void* master=entry.master.load();
+                if (!graphic || !skin || !master) return false;
+                void* pawn=Field<void*>(graphic,8);
+                if (!pawn || !ContainsSkin(pawn,skin) || Field<void*>(pawn,0x384)!=master ||
+                    Field<void*>(skin,0x29C)!=master || !(Field<unsigned int>(master,0x128)&4u) ||
+                    ((Field<unsigned int>(skin,0x128)&4u)!=0)!=hidden ||
+                    (Field<unsigned int>(master,0x3B0)&0xA0u)!=0xA0u) return false;
+                const int count=Field<int>(skin,0x2A4);
+                auto* map=Field<int*>(skin,0x2A0);
+                if (count!=(entry.childhood.load()?98:80) || !map) return false;
+                for (int i=0;i<count;++i) if (map[i]<0 || map[i]>=91) return false;
+                return true;
+            }
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+        return false;
+    }
+
+    void __cdecl TheresaHeroSkin::RefreshVisual(void* command)
+    {
+        auto* hook=active_;
+        if (!hook || !command) return;
+        __try
+        {
+            void* graphic=Field<void*>(command,0);
+            auto* entry=hook->FindGraphic(graphic);
+            if (!entry || !entry->skin.load()) return;
+            void* pawn=Field<void*>(graphic,8);
+            if (!pawn || Field<void*>(pawn,0x384)!=entry->master.load()) return;
+            const int count=Field<int>(pawn,0x4FC);
+            auto** meshes=Field<void**>(pawn,0x4F8);
+            if (count<0 || count>128 || (count && !meshes)) return;
+            using Hide=void(__thiscall*)(void*,unsigned int);
+            auto hide=reinterpret_cast<Hide>(reinterpret_cast<std::uintptr_t>(hook->module_)+SetHiddenRva);
+            // This native array contains clothing and our skin, not inventory
+            // weapons. Refresh it on the graphics thread after wear/rebuild.
+            for (int i=0;i<count;++i) if (meshes[i]) hide(meshes[i],cutsceneHidden.load()?1:0);
+            hide(entry->master.load(),1);
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) {}
     }
 
     void* __cdecl TheresaHeroSkin::LoadSkinObject(void* type, void* outer,
@@ -384,17 +478,18 @@ namespace fable::game::hero_pawn::appearance::hooks
             using LoadPackage=void*(__cdecl*)(void*,const wchar_t*,unsigned int);
             using LoadObject=void*(__cdecl*)(void*,void*,const wchar_t*,const wchar_t*,
                 unsigned int,void*,int);
-            void* package=reinterpret_cast<LoadPackage>(base+LoadPackageRva)(nullptr,SkinPackage,0);
+            const bool child=entry->childhood.load();
+            void* package=reinterpret_cast<LoadPackage>(base+LoadPackageRva)(nullptr,child?ChildSkinPackage:SkinPackage,0);
             if (package)
             {
                 void* heroAsset=Field<void*>(master,0x1E4);
                 void* meshClass=heroAsset?Field<void*>(heroAsset,0x34):nullptr;
                 if (meshClass)
                     loadedAsset=reinterpret_cast<LoadObject>(base+LoadObjectRva)(
-                        meshClass,nullptr,SkinObjectPath,nullptr,0,nullptr,1);
+                        meshClass,nullptr,child?ChildSkinObjectPath:SkinObjectPath,nullptr,0,nullptr,1);
             }
             char detail[192]={};
-            std::snprintf(detail,sizeof(detail),"package=%p asset=%p path=wesister_01.MESH_SISTER_01",package,loadedAsset);
+            std::snprintf(detail,sizeof(detail),"package=%p asset=%p childhood=%s",package,loadedAsset,child?"true":"false");
             hook->diagnostics_.Event(loadedAsset?"MultiplayerTheresaHeroSkinAssetLoaded":
                 "MultiplayerTheresaHeroSkinAssetFailed",detail);
             if (!loadedAsset) return; // Leave the original visible Hero intact.
@@ -437,6 +532,8 @@ namespace fable::game::hero_pawn::appearance::hooks
                     Field<std::uint32_t>(master,0x3B0)|=0xA0u;
                     reinterpret_cast<Hide>(base+SetHiddenRva)(master,1);
                     entry->skin.store(skin,std::memory_order_release);
+                    entry->visualKey.store(0);
+                    reinterpret_cast<Hide>(base+SetHiddenRva)(skin,cutsceneHidden.load()?1:0);
                     installed=true;
                     stage="attached";
                 }

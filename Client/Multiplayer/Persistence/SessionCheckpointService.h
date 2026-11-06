@@ -36,6 +36,7 @@ namespace fable::multiplayer
             bool IsBarrierActive() const noexcept { return reloadRequested_ || loading_; }
             std::uint64_t WorldFence() const noexcept { return worldFence_.load(std::memory_order_acquire); }
             bool HasCheckpointForTest() const noexcept { return committed_[0].ticket.revision != 0; }
+            std::uint64_t RevisionForTest() const noexcept { return committed_[0].ticket.revision; }
             std::uint64_t LoadedAttemptForTest() const noexcept { return reloading_.ticket.rollback; }
             float SavedHealthForTest() const noexcept { return committed_[0].health; }
             bool RequestReloadForTest() noexcept;
