@@ -54,7 +54,8 @@ namespace fable::game::hero_pawn::remote
     {
         Retire();
         owner_.nextSpawnAttemptAt_ = GetTickCount64() + 5'000;
-        owner_.definitionArmToken_ = owner_.definitionHook_->Arm(state.heroMorph.childhood);
+        owner_.definitionArmToken_ = owner_.definitionHook_->Arm(
+            state.heroMorph.childhood, state.role == multiplayer::PeerRole::Guest);
         if (owner_.definitionArmToken_ == 0)
         {
             owner_.diagnostics_.Event(

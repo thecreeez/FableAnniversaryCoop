@@ -3,6 +3,7 @@
 #include "Core/Diagnostics/Diagnostics.h"
 #include "Game/Creature/Equipment/Hooks/CreatureCarryingMutationObserver.h"
 #include "Game/HeroPawn/Appearance/Hooks/HeroAppearanceMutationObserver.h"
+#include "Game/HeroPawn/Appearance/Hooks/TheresaAppearanceHook.h"
 #include "Game/HeroPawn/Equipment/Hooks/HeroEquipmentMutationObserver.h"
 #include "Multiplayer/Protocol/PlayerState.h"
 #include "Multiplayer/Replication/LocalHeroOwnedStateRestorer.h"
@@ -109,6 +110,7 @@ namespace fable::multiplayer::replication
         [[nodiscard]] std::uint64_t LastEquipmentMutationAt() const noexcept;
 
     private:
+        game::hero_pawn::appearance::hooks::TheresaAppearanceHook theresaAppearance_;
         static void ObservePlayerFrame(void* context, void* playerCreature);
         static void ObserveAppearanceMutation(
             void* context,

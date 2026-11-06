@@ -173,6 +173,9 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClCompile Include="Game\HeroPawn\Appearance\Native\HeroClothingComponent.cpp" />
     <ClCompile Include="Game\HeroPawn\Appearance\Native\HeroMorphComponent.cpp" />
     <ClCompile Include="Game\HeroPawn\Appearance\Native\RemoteHeroRuntimeDefinition.cpp" />
+    <ClCompile Include="Game\HeroPawn\Appearance\Hooks\TheresaAppearanceHook.cpp" />
+    <ClCompile Include="Game\HeroPawn\Appearance\Hooks\TheresaHeroSkin.cpp" />
+    <ClCompile Include="Game\HeroPawn\Equipment\Hooks\TheresaWeaponAttachmentHook.cpp" />
     <ClCompile Include="Game\HeroPawn\Appearance\RemoteHeroAppearanceController.cpp" />
     <ClCompile Include="Game\HeroPawn\Combat\RemoteHeroCombatController.cpp" />
     <ClCompile Include="Game\HeroPawn\Combat\RemoteHeroRangedAimController.cpp" />
@@ -499,6 +502,9 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClInclude Include="Game\HeroPawn\Appearance\Native\HeroClothingComponent.h" />
     <ClInclude Include="Game\HeroPawn\Appearance\Native\HeroMorphComponent.h" />
     <ClInclude Include="Game\HeroPawn\Appearance\Native\RemoteHeroRuntimeDefinition.h" />
+    <ClInclude Include="Game\HeroPawn\Appearance\Hooks\TheresaAppearanceHook.h" />
+    <ClInclude Include="Game\HeroPawn\Appearance\Hooks\TheresaHeroSkin.h" />
+    <ClInclude Include="Game\HeroPawn\Equipment\Hooks\TheresaWeaponAttachmentHook.h" />
     <ClInclude Include="Game\HeroPawn\Appearance\RemoteHeroAppearanceController.h" />
     <ClInclude Include="Game\HeroPawn\Combat\RemoteHeroCombatController.h" />
     <ClInclude Include="Game\HeroPawn\Combat\RemoteHeroRangedAimController.h" />

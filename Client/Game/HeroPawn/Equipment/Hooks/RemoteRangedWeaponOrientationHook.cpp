@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <intrin.h>
 
 namespace
 {
@@ -82,6 +83,8 @@ namespace fable::game::hero_pawn::equipment::hooks
             return false;
         }
         original_ = reinterpret_cast<ResolveTransform>(patch_.Original());
+        // Theresa now follows the Hero driver. The old Sister focus/scabbard
+        // corrections must stay disabled on the unchanged Hero weapon rig.
 
         char detail[192] = {};
         std::snprintf(
@@ -102,6 +105,11 @@ namespace fable::game::hero_pawn::equipment::hooks
         {
             diagnostics_.Log(
                 "Hook: remote ranged orientation patch was not removed because target ownership changed.");
+            return;
+        }
+        if (!theresaAttachments_.Shutdown())
+        {
+            diagnostics_.Event("MultiplayerTheresaWeaponShutdownDeferred", "named bone hook ownership changed");
             return;
         }
         if (active_ == this)
@@ -260,17 +268,23 @@ namespace fable::game::hero_pawn::equipment::hooks
         {
             return false;
         }
-        const bool resolved = hook->original_(
+        bool theresaAdapted = false;
+        const bool resolved = hook->theresaAttachments_.ResolveAttachment(hook->original_,
             attachment,
             position,
             orientation,
             interpolate,
             alpha,
-            useSolidAttachment);
+            useSolidAttachment,
+            theresaAdapted,
+            reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
         if (!resolved || orientation == nullptr)
         {
             return resolved;
         }
+        // The named-bone frame was already adapted before native final-frame
+        // assembly/cache writes; do not apply the generic Hero bow flip twice.
+        if (theresaAdapted) return resolved;
         Registration* const registration =
             hook->FindAttachmentMatch(attachment);
         if (registration == nullptr)

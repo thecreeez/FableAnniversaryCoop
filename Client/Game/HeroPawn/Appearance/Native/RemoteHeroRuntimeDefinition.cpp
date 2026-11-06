@@ -1,4 +1,5 @@
 #include "RemoteHeroRuntimeDefinition.h"
+#include "Game/HeroPawn/Appearance/Hooks/TheresaAppearanceHook.h"
 
 #include "Game/Native/Addresses.h"
 #include "Game/Native/ScriptTypes.h"
@@ -122,7 +123,7 @@ namespace fable::game::hero_pawn::appearance::native
     bool RemoteHeroRuntimeDefinition::Ensure(
         HMODULE gameModule,
         DefinitionLookup definitionLookup,
-        const core::Diagnostics& diagnostics, bool childhood) noexcept
+        const core::Diagnostics& diagnostics, bool childhood, bool theresa) noexcept
     {
         if (definition_ != nullptr)
         {
@@ -192,7 +193,7 @@ namespace fable::game::hero_pawn::appearance::native
             {
                 __leave;
             }
-            if (childhood)
+            if (childhood && !theresa)
             {
                 CharString childName;
                 constructString(&childName, "CREATURE_HERO_CHILD", -1);
@@ -200,7 +201,6 @@ namespace fable::game::hero_pawn::appearance::native
                 destroyString(&childName);
                 if (!childIndex || !definitionLookup(definitionManager, childIndex, &child) || !child) __leave;
             }
-
             void** const expectedVtable = reinterpret_cast<void**>(
                 base + game::native::rva::ThingCreatureDefinitionVtable);
             heroVtable = *reinterpret_cast<void**>(hero);
@@ -256,8 +256,11 @@ namespace fable::game::hero_pawn::appearance::native
                 failureStage = name;
                 CharString value;
                 constructString(&value, name, -1);
-                const SubDefinitionInfo* const source =
-                    getHeroSubDefinition(child && std::strcmp(name, "CHeroMorphDef") && std::strcmp(name, "CCarryingDef") ? child : hero, &value);
+                // Hero retains the complete driver; Sister is a render-only follower.
+                void* sourceDefinition = hero;
+                if (child && std::strcmp(name, "CHeroMorphDef") && std::strcmp(name, "CCarryingDef"))
+                    sourceDefinition = child;
+                const SubDefinitionInfo* const source = getHeroSubDefinition(sourceDefinition, &value);
                 if (source != nullptr)
                 {
                     sourceSubDefinitionIndex = source->definitionIndex;
@@ -300,20 +303,23 @@ namespace fable::game::hero_pawn::appearance::native
             auto* const cloneBytes = static_cast<std::uint8_t*>(clone);
             const auto* const heroBytes =
                 static_cast<const std::uint8_t*>(child ? child : hero);
+            const auto* const visualBytes = static_cast<const std::uint8_t*>(
+                child ? child : hero);
             std::memcpy(
                 cloneBytes + kMeshDimensionsOffset,
                 heroBytes + kMeshDimensionsOffset,
                 kMeshDimensionsSize);
             std::memcpy(
                 cloneBytes + kGraphicOffset,
-                heroBytes + kGraphicOffset,
+                visualBytes + kGraphicOffset,
                 kGraphicSize);
             std::memcpy(
                 cloneBytes + kEyeGraphicOffset,
-                heroBytes + kEyeGraphicOffset,
+                visualBytes + kEyeGraphicOffset,
                 kEyeGraphicSize);
 
             definition_ = clone;
+            if (theresa) hooks::TheresaAppearanceHook::RegisterRemoteDefinition(definition_);
             retailBaseIndex_ = rivalIndex;
             clone = nullptr;
             ready = true;
@@ -357,12 +363,13 @@ namespace fable::game::hero_pawn::appearance::native
         std::snprintf(
             detail,
             sizeof(detail),
-            "definition=%p retail_base=%s hero_source=%s rival_index=%u subdefs=%zu",
+            "definition=%p retail_base=%s hero_source=%s rival_index=%u subdefs=%zu visual=%s",
             definition_,
             kRivalDefinitionName,
             kHeroDefinitionName,
             retailBaseIndex_,
-            kHeroSubDefinitions.size());
+            kHeroSubDefinitions.size(),
+            theresa ? "CREATURE_HERO + Sister render skin" : childhood ? "CREATURE_HERO_CHILD" : kHeroDefinitionName);
         diagnostics.Event(
             "MultiplayerRemoteHeroRuntimeDefinitionBuilt",
             detail);

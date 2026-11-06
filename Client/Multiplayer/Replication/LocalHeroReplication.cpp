@@ -95,6 +95,8 @@ namespace fable::multiplayer::replication
         playerId_ = std::move(playerId);
         appearanceDefinition_ = std::move(appearanceDefinition);
         morphSelfTest_ = morphSelfTest;
+        if (!theresaAppearance_.Install(entities.GameModule(), role == PeerRole::Guest, diagnostics_))
+            diagnostics_.Event("ClientFailed", "multiplayer-theresa-appearance-hooks");
         if (appearanceObserver_.Install(entities.GameModule(), diagnostics_))
         {
             appearanceObserver_.SetEventSink(
@@ -504,6 +506,7 @@ namespace fable::multiplayer::replication
                 game::hero_pawn::appearance::ReportHeroSkeletalPresentation(
                     "owner", nativeHero_, diagnostics_);
         }
+        game::hero_pawn::appearance::hooks::TheresaHeroSkin::Update(nativeHero_);
         CaptureMovement(GetTickCount64());
         if (transport_->HasFailed() && !transportFailureReported_)
         {
@@ -1060,6 +1063,7 @@ namespace fable::multiplayer::replication
 
     void LocalHeroReplication::ReleaseHero() noexcept
     {
+        game::hero_pawn::appearance::hooks::TheresaHeroSkin::Forget(nativeHero_);
         if (combatants_ != nullptr && nativeHero_ != nullptr)
         {
             combatants_->Unbind(actorId_, nativeHero_);
@@ -1097,6 +1101,7 @@ namespace fable::multiplayer::replication
 
     void LocalHeroReplication::Shutdown() noexcept
     {
+        theresaAppearance_.Shutdown();
         carryingObserver_.Shutdown();
         equipmentObserver_.Shutdown();
         appearanceObserver_.Shutdown();

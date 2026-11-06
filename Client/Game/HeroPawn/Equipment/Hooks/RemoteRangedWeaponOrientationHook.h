@@ -2,6 +2,7 @@
 
 #include "Core/Diagnostics/Diagnostics.h"
 #include "Core/Hooking/CodePatch.h"
+#include "TheresaWeaponAttachmentHook.h"
 
 #include <Windows.h>
 
@@ -37,11 +38,7 @@ namespace fable::game::hero_pawn::equipment::hooks
         [[nodiscard]] bool IsInstalled() const noexcept;
 
     private:
-        struct NativeRightHandedSet final
-        {
-            float up[3] = {};
-            float forward[3] = {};
-        };
+        using NativeRightHandedSet = TheresaWeaponAttachmentHook::Basis;
         static_assert(sizeof(NativeRightHandedSet) == 24);
 
         using ResolveTransform = bool(__thiscall*)(
@@ -89,6 +86,7 @@ namespace fable::game::hero_pawn::equipment::hooks
         core::Diagnostics diagnostics_ = {};
         ResolveTransform original_ = nullptr;
         core::hooking::InlineHook patch_;
+        TheresaWeaponAttachmentHook theresaAttachments_;
         std::array<Registration, RegistrationCapacity> registrations_ = {};
         std::atomic<RegistrationToken> nextToken_{1};
     };

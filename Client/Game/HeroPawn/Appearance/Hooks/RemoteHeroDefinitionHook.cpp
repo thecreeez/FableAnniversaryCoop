@@ -134,6 +134,7 @@ namespace fable::game::hero_pawn::appearance::hooks
         }
         runtimeDefinition_.AbandonForProcessLifetime();
         childDefinition_.AbandonForProcessLifetime();
+        theresaDefinition_.AbandonForProcessLifetime();
         armedDefinition_ = nullptr;
         originalLookup_ = nullptr;
         originalApply_ = nullptr;
@@ -144,15 +145,15 @@ namespace fable::game::hero_pawn::appearance::hooks
         diagnostics_ = {};
     }
 
-    RemoteHeroDefinitionHook::ArmToken RemoteHeroDefinitionHook::Arm(bool childhood) noexcept
+    RemoteHeroDefinitionHook::ArmToken RemoteHeroDefinitionHook::Arm(bool childhood, bool theresa) noexcept
     {
+        auto& definition = theresa ? theresaDefinition_ : childhood ? childDefinition_ : runtimeDefinition_;
         if (!IsInstalled() ||
-            !(childhood ? childDefinition_ : runtimeDefinition_).Ensure(
-                gameModule_, originalLookup_, diagnostics_, childhood))
+            !definition.Ensure(gameModule_, originalLookup_, diagnostics_, childhood, theresa))
         {
             return 0;
         }
-        armedDefinition_ = childhood ? &childDefinition_ : &runtimeDefinition_;
+        armedDefinition_ = &definition;
         const ArmToken token = armToken_.fetch_add(
             1, std::memory_order_acq_rel) + 1;
         substitutions_.store(0, std::memory_order_relaxed);
@@ -256,7 +257,8 @@ namespace fable::game::hero_pawn::appearance::hooks
             return;
         }
         hook->originalApply_(thing, definition);
-        if ((definition == hook->runtimeDefinition_.Get() || definition == hook->childDefinition_.Get()) &&
+        if ((definition == hook->runtimeDefinition_.Get() || definition == hook->childDefinition_.Get() ||
+                definition == hook->theresaDefinition_.Get()) &&
             hook->IsActiveOnCurrentThread())
         {
             (void)hook->ProvisionHeroComponents(thing);

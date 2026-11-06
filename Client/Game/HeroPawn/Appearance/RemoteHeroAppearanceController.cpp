@@ -1,4 +1,5 @@
 #include "RemoteHeroAppearanceController.h"
+#include "Game/HeroPawn/Appearance/Hooks/TheresaAppearanceHook.h"
 
 #include "Game/HeroPawn/Appearance/Diagnostics/HeroPresentationDiagnostics.h"
 #include "Game/HeroPawn/Appearance/Native/HeroAttachableAppearanceComponent.h"
@@ -40,7 +41,7 @@ namespace fable::game::hero_pawn::appearance
         {
             return false;
         }
-        if (appearanceReady && !morph.childhood &&
+        if (appearanceReady && !morph.childhood && !hooks::TheresaAppearanceHook::UsesTheresaPresentation(nativeHero_) &&
             !native::HeroMorphComponent::ApplyValues(nativeHero_, morph))
         {
             return false;
@@ -97,6 +98,7 @@ namespace fable::game::hero_pawn::appearance
             return RemoteHeroAppearanceResult::Pending;
         }
         resolutionPendingReported_ = false;
+        hooks::TheresaHeroSkin::Update(nativeHero_);
         if (!graphicRuntimeReported_)
         {
             graphicRuntimeReported_ = ReportHeroSkeletalPresentation(
@@ -106,10 +108,11 @@ namespace fable::game::hero_pawn::appearance
         {
             return RemoteHeroAppearanceResult::Ready;
         }
-        if (morph.childhood)
+        const bool theresa = hooks::TheresaAppearanceHook::UsesTheresaPresentation(nativeHero_);
+        if (morph.childhood && !theresa)
         {
-            // The child's stock mesh/outfit belongs to its private child
-            // definition. Adult morph/clothing rebuilds replace that mesh.
+            // Stock childhood model keeps its own outfit; the experimental
+            // Theresa profile accepts clothing regardless of story life stage.
             appliedMorph_ = morph;
             return RemoteHeroAppearanceResult::Ready;
         }
@@ -141,6 +144,14 @@ namespace fable::game::hero_pawn::appearance
             // Let the engine publish the resulting component graph before
             // applying another native appearance mutation.
             return RemoteHeroAppearanceResult::Pending;
+        }
+        if (theresa)
+        {
+            // Native wear rebuild above supplies the selected clothing. Do not
+            // replay Hero hair/horns/skin modifiers or numeric bone-scale indices
+            // onto Sister's different skeleton. Native hooks filter both stages.
+            appliedMorph_ = morph;
+            return RemoteHeroAppearanceResult::Ready;
         }
         if (!appliedModifiers_.Equals(modifiers))
         {
@@ -271,6 +282,7 @@ namespace fable::game::hero_pawn::appearance
 
     void RemoteHeroAppearanceController::Unbind() noexcept
     {
+        hooks::TheresaHeroSkin::Forget(nativeHero_);
         nativeHero_ = nullptr;
         actorId_ = 0;
         appliedMorph_ = {};
