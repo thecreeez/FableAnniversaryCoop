@@ -1,20 +1,26 @@
-# AlbionTogether — Fable Anniversary Multiplayer Mod
+# FableAnniversaryCoop — Fable Anniversary COOP Mod
 
-Experimental multiplayer mod for Fable Anniversary.
+Based on [AlbionTogether](https://github.com/kvoeten/AlbionTogether)
 
-Join the [AlbionTogether Discord](https://discord.gg/5JSKmjKd85) for playtests, updates, and support.
+## Current state
 
-![Six Heroes together in Albion](media/six-player-alpha.png)
-
-## Current alpha
-
-One host can accept up to 64 guests (65 players total); the current alpha has been manually tested with six players. Players can load their own Heroes, explore Albion independently, and meet up anywhere. Remote Heroes keep their appearance, weapons, combat animations, emotes, and most Will spell effects.
-
-The latest update improves loading different saves, travelling between regions, and shopkeeper stability.
-
-During alpha, expect some jank. Systems are being roughly implemented to make a full multiplayer playthrough possible. Once the full game can be played by two or more people, development will move into beta and focus on polishing the experience toward release.
+Right now working around stable working shared world and complete game. Final goal is make game fully playable from the start till the end with 2 players.
 
 ### Done
+
+- Shared world, npcs synchronized
+- Cutscenes requires all players (made with native dialogue system)
+- Npcs animations
+- Xp, loot and chests
+- Players things (animations, modifiers on weapon, attack modifier)
+
+### Unstable
+
+- Players can play as main character sister. Fully visible armor and weapon.
+- Shared quests
+- Synchronized save/load by host (also death because of any player died.)
+
+### Was done in AlbionTogether
 
 - Load your own save character and see each other.
 - Walk around Albion independently and meet in any region.
@@ -32,12 +38,6 @@ During alpha, expect some jank. Systems are being roughly implemented to make a 
 - Native launcher for hosting, joining, connection checks, and firewall setup.
 
 ### Next
-
-- Shared quests, cutscenes, warps, and world progress.
-- Equipment, loot, trading, currency, shops, and property ownership.
-- Player names, interaction menus, door/key permissions, and RP tools.
-- Proximity voice chat.
-- Slow Time and Raise Dead synchronization (optional; may be omitted).
 
 This is an early development release. Back up ordinary saves before testing.
 
@@ -74,10 +74,10 @@ The MIT License only covers code that this project has the right to license.
 
 ## Disclaimer
 
-AlbionTogether is an unofficial fan project and is not affiliated with,
+FableAnniversaryCoop is an unofficial fan project and is not affiliated with,
 authorized, sponsored, or endorsed by Microsoft.
 
-AlbionTogether requires a legally obtained Steam copy of Fable Anniversary
+FableAnniversaryCoop requires a legally obtained Steam copy of Fable Anniversary
 with modding support. It does not distribute Microsoft game files or provide
 access to the game itself.
 
