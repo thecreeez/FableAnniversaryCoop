@@ -25,6 +25,11 @@ namespace fable::game::hero_pawn::appearance::native
         [[nodiscard]] static bool CaptureCatalog(
             void* nativeThing, HeroClothingCatalog& catalog) noexcept;
 
+        // Read enabled modifiers of the menu's data clone, including hover
+        // selection. The real Hero's equipped snapshot can still be older.
+        [[nodiscard]] static bool CapturePreview(
+            void* nativeThing, HeroClothingState& state) noexcept;
+
         // Re-publish the already equipped clothing modifiers after a world
         // transition. Does not wear/unwear items or alter inventory entries.
         [[nodiscard]] static bool RefreshEquipped(void* nativeThing) noexcept;

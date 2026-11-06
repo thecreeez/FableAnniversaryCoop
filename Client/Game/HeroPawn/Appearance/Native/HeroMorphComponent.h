@@ -44,6 +44,9 @@ namespace fable::game::hero_pawn::appearance::native
         // Modest render-only proportions; does not edit Hero stats/morph inputs.
         static bool ApplyTheresaShape(void* nativeThing,
             TheresaVisualShapeState& state, bool restore = false) noexcept;
+        static bool ApplyTheresaGraphicShape(void* graphic,
+            TheresaVisualShapeState& state) noexcept;
+        static bool InspectGraphicResolution(void* graphic,HeroMorphResolutionState& state) noexcept;
         [[nodiscard]] static bool SetUpdateRequested(
             void* nativeThing,
             bool requested) noexcept;
@@ -72,5 +75,8 @@ namespace fable::game::hero_pawn::appearance::native
             void* nativeThing,
             const HeroBoneScaleState& state,
             std::uint32_t* matchedCount = nullptr) noexcept;
+    private:
+        static bool ApplyTheresaShapeImpl(void* value,TheresaVisualShapeState& state,
+            bool restore,bool graphicOnly) noexcept;
     };
 }

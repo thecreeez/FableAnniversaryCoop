@@ -59,7 +59,7 @@ namespace
     {
         float depth=6,halfWidth=7.5f,height=143,radiusX=14,radiusZ=18,rigidFactor=0.75f;
         float maxStretch=1.25f;
-        float boneDepthScale=1.35f;
+        float boneDepthScale=1.50f;
     };
     struct RawLod final
     {
@@ -88,7 +88,67 @@ namespace
     fable::core::Diagnostics diagnostics;
     Profile profile;
     std::atomic_bool named{false};
+    std::atomic<float> liveBoneDepth{1.50f};
+    std::atomic<float> liveHips{0.45f},liveButtocks{0.35f};
+    std::atomic<float> liveShoulderNarrowing{0.60f};
+    std::atomic<float> liveWaistNarrowing{0.25f};
+    std::atomic<float> liveTorsoNarrowing{1.35f};
+    bool shapeHotkeys=false,profileLogged=false;
+    std::atomic_bool sizeKeysEnabled{false};
+    struct KeyRepeat final { unsigned long long nextAt=0;int direction=0; };
+    KeyRepeat sizeRepeat;
+    KeyRepeat hipsRepeat,buttocksRepeat;
+    KeyRepeat shouldersRepeat;
+    KeyRepeat waistRepeat;
+    KeyRepeat torsoRepeat;
+    bool bookmarkDown=false;
     unsigned int reports=0;
+    int HeldSizeStep(KeyRepeat& state,int direction,unsigned long long now)
+    {
+        if (!direction) { state={};return 0; }
+        if (direction!=state.direction)
+        { state.direction=direction;state.nextAt=now+350;return direction; }
+        if (now<state.nextAt) return 0;
+        state.nextAt=now+100; // No frame-rate dependence or catch-up burst.
+        return direction;
+    }
+    float SteppedSize(float previous,int direction,float minimum,float maximum)
+    {
+        return std::clamp(std::round((previous+direction*0.05f)*100)/100,minimum,maximum);
+    }
+    bool AdjustSize(std::atomic<float>& value,KeyRepeat& repeat,int increaseKey,int decreaseKey,
+        float minimum,float maximum,const char* region,unsigned long long now)
+    {
+        const bool increase=(GetAsyncKeyState(increaseKey)&0x8000)!=0;
+        const bool decrease=(GetAsyncKeyState(decreaseKey)&0x8000)!=0;
+        const int direction=HeldSizeStep(repeat,increase==decrease?0:increase?1:-1,now);
+        if (!direction) return false;
+        const float previous=value.load();
+        const float next=SteppedSize(previous,direction,minimum,maximum);
+        if (std::fabs(next-previous)<0.0001f) return false;
+        value.store(next);
+        char detail[160]={};
+        std::snprintf(detail,sizeof(detail),"region=%s value=%.2f step=.05 range=%.1f..%.1f key_vk=0x%02X session_only=1",
+            region,next,minimum,maximum,direction>0?increaseKey:decreaseKey);
+        diagnostics.Event("MultiplayerTheresaBodySizeChanged",detail);
+        return true;
+    }
+    void LogBodyProfile(const char* reason)
+    {
+        using fable::game::hero_pawn::appearance::native::TheresaGarmentShape;
+        const auto lower=TheresaGarmentShape::LowerBodyScales();
+        const auto shoulder=TheresaGarmentShape::ShoulderScales();
+        char detail[768]={};
+        std::snprintf(detail,sizeof(detail),
+            "version=4 reason=%s pid=%lu chest_depth_requested=%.2f hips=%.2f buttocks=%.2f "
+            "shoulder_narrowing=%.2f clavicle_length_scale=%.3f upper_arm_scale=%.3f "
+            "pelvis_width=%.3f pelvis_depth=%.3f hip_spacing=%.3f thigh_width=%.3f thigh_depth=%.3f waist_narrowing=%.2f waist_cross_scale=%.3f torso_narrowing=%.2f torso_cross_scale=%.3f hotkeys_enabled=%u config=theresa-garment-shape.ini",
+            reason,GetCurrentProcessId(),liveBoneDepth.load(),liveHips.load(),liveButtocks.load(),
+            liveShoulderNarrowing.load(),shoulder.clavicleLength,shoulder.upperArmScale,lower.pelvisWidth,lower.pelvisDepth,
+            lower.hipSpacing,lower.thighWidth,lower.thighDepth,liveWaistNarrowing.load(),TheresaGarmentShape::WaistScale(),
+            liveTorsoNarrowing.load(),TheresaGarmentShape::TorsoScale(),shapeHotkeys?1u:0u);
+        diagnostics.Event("MultiplayerTheresaBodyProfile",detail);
+    }
     float Push(Vec position,float weight,float depth,const Profile& shape);
 
     bool PaintWeights(Baseline& base)
@@ -427,6 +487,24 @@ namespace
         const float value=std::wcstof(text,&end);
         return end!=text && *end==0 && std::isfinite(value)?std::clamp(value,lo,hi):fallback;
     }
+    void LoadShapeSettings(const std::wstring& config)
+    {
+        profile.depth=ReadSetting(config,L"Depth",6,0,12);
+        profile.halfWidth=ReadSetting(config,L"HalfWidth",7.5f,3,13);
+        profile.height=ReadSetting(config,L"Height",143,125,160);
+        profile.radiusX=ReadSetting(config,L"RadiusX",14,5,18);
+        profile.radiusZ=ReadSetting(config,L"RadiusZ",18,6,22);
+        profile.rigidFactor=ReadSetting(config,L"RigidFactor",0.75f,0.25f,1);
+        profile.maxStretch=ReadSetting(config,L"MaxStretch",1.25f,1.01f,1.5f);
+        profile.boneDepthScale=ReadSetting(config,L"BoneDepthScale",1.50f,1,2);
+        liveBoneDepth.store(profile.boneDepthScale);
+        liveHips.store(ReadSetting(config,L"Hips",0.45f,0,1.5f,L"Body"));
+        liveButtocks.store(ReadSetting(config,L"Buttocks",0.35f,0,1.5f,L"Body"));
+        liveShoulderNarrowing.store(ReadSetting(config,L"ShoulderNarrowing",0.60f,0,1.5f,L"Body"));
+        liveWaistNarrowing.store(ReadSetting(config,L"WaistNarrowing",0.25f,0,1.5f,L"Body"));
+        liveTorsoNarrowing.store(ReadSetting(config,L"TorsoNarrowing",1.35f,0,1.5f,L"Body"));
+        shapeHotkeys=ReadSetting(config,L"EnableShapeHotkeys",0,0,1,L"Controls")>=1;
+    }
     bool LoadCache()
     {
         HMODULE self=nullptr;
@@ -440,14 +518,7 @@ namespace
         if (slash==std::wstring::npos) return false;
         const auto folder=file.substr(0,slash+1);
         const auto config=folder+L"theresa-garment-shape.ini";
-        profile.depth=ReadSetting(config,L"Depth",6,0,12);
-        profile.halfWidth=ReadSetting(config,L"HalfWidth",7.5f,3,13);
-        profile.height=ReadSetting(config,L"Height",143,125,160);
-        profile.radiusX=ReadSetting(config,L"RadiusX",14,5,18);
-        profile.radiusZ=ReadSetting(config,L"RadiusZ",18,6,22);
-        profile.rigidFactor=ReadSetting(config,L"RigidFactor",0.75f,0.25f,1);
-        profile.maxStretch=ReadSetting(config,L"MaxStretch",1.25f,1.01f,1.5f);
-        profile.boneDepthScale=ReadSetting(config,L"BoneDepthScale",1.35f,1,1.6f);
+        LoadShapeSettings(config);
         std::ifstream input(folder+L"theresa-garment-geometry.bin",std::ios::binary);
         char magic[8]={};
         unsigned int count=0;
@@ -804,6 +875,7 @@ namespace fable::game::hero_pawn::appearance::native
         {
             if (moduleBase && ValidateHelpers() && LoadCache())
             {
+                liveBoneDepth.store(profile.boneDepthScale);
                 unsigned char signature[]={0x6A,0xFF,0x68,0,0,0,0};
                 const auto handler=static_cast<unsigned int>(moduleBase+0x023E0168);
                 std::memcpy(signature+3,&handler,4);
@@ -829,6 +901,11 @@ namespace fable::game::hero_pawn::appearance::native
         originalSerializeBuffer=nullptr;
         copyingGarment=false;
         copyingBase=nullptr;copyingSource=nullptr;
+        sizeKeysEnabled.store(false);
+        profileLogged=false;shapeHotkeys=false;
+        sizeRepeat={};
+        hipsRepeat={};buttocksRepeat={};
+        shouldersRepeat={};waistRepeat={};torsoRepeat={};bookmarkDown=false;
         // Native objects/resources remain component-owned and GC-referenced.
         moduleBase=0;
         baselines.clear();
@@ -862,10 +939,68 @@ namespace fable::game::hero_pawn::appearance::native
                 if (!holder) continue;
                 for (const auto& base:baselines)
                     if (Same(Field<Name>(holder,0x2C),base.bakedName) && Field<void*>(holder,0x48)==asset)
-                        return profile.boneDepthScale;
+                        return liveBoneDepth.load();
             }
         }
         __except(EXCEPTION_EXECUTE_HANDLER) {}
         return 1;
+    }
+    TheresaGarmentShape::LowerBodyProfile TheresaGarmentShape::LowerBodyScales() noexcept
+    {
+        const float hips=std::clamp(liveHips.load(),0.0f,1.5f);
+        const float buttocks=std::clamp(liveButtocks.load(),0.0f,1.5f);
+        // Authored pelvis Y is depth, Z is width. Thigh X is longitudinal:
+        // leave it unchanged so the native calf translation/leg length stays put.
+        return {1+0.18f*hips,1+0.22f*buttocks,1+0.12f*hips,1+0.12f*hips,1+0.12f*buttocks};
+    }
+    bool TheresaGarmentShape::CaptureSizeKey(unsigned int message,unsigned int key) noexcept
+    {
+        return sizeKeysEnabled.load() && (key==VK_F1 || key==VK_F2 || key==VK_F3 || key==VK_F4 ||
+            key==VK_F6 || key==VK_F7 || key==VK_F9 || key==VK_F10 || key==VK_F11 || key==VK_OEM_4 || key==VK_OEM_6) &&
+            (message==WM_KEYDOWN || message==WM_KEYUP || message==WM_SYSKEYDOWN || message==WM_SYSKEYUP);
+    }
+    bool TheresaGarmentShape::TickSizeHotkeys() noexcept
+    {
+        if (!moduleBase) return false;
+        if (!profileLogged) { LogBodyProfile("initial_from_ini");profileLogged=true; }
+        sizeKeysEnabled.store(shapeHotkeys);
+        if (!shapeHotkeys)
+        { sizeRepeat={};hipsRepeat={};buttocksRepeat={};shouldersRepeat={};waistRepeat={};torsoRepeat={};bookmarkDown=false;return false; }
+        DWORD process=0;
+        const HWND foreground=GetForegroundWindow();
+        if (foreground) GetWindowThreadProcessId(foreground,&process);
+        if (process!=GetCurrentProcessId())
+        { sizeRepeat={};hipsRepeat={};buttocksRepeat={};shouldersRepeat={};waistRepeat={};torsoRepeat={};bookmarkDown=false;return false; }
+        const auto now=GetTickCount64();
+        const bool chest=AdjustSize(liveBoneDepth,sizeRepeat,VK_F1,VK_F2,1,2,"chest",now);
+        const bool hips=AdjustSize(liveHips,hipsRepeat,VK_F3,VK_F4,0,1.5f,"hips",now);
+        const bool buttocks=AdjustSize(liveButtocks,buttocksRepeat,VK_F6,VK_F7,0,1.5f,"buttocks",now);
+        const bool shoulders=AdjustSize(liveShoulderNarrowing,shouldersRepeat,VK_F9,VK_F10,0,1.5f,"shoulder_narrowing",now);
+        const bool shift=(GetAsyncKeyState(VK_SHIFT)&0x8000)!=0;
+        if (shift) waistRepeat={};else torsoRepeat={};
+        const bool waist=!shift && AdjustSize(liveWaistNarrowing,waistRepeat,VK_OEM_4,VK_OEM_6,0,1.5f,"waist_narrowing",now);
+        const bool torso=shift && AdjustSize(liveTorsoNarrowing,torsoRepeat,VK_OEM_4,VK_OEM_6,0,1.5f,"torso_narrowing",now);
+        const bool bookmark=(GetAsyncKeyState(VK_F11)&0x8000)!=0;
+        if (bookmark && !bookmarkDown) LogBodyProfile("bookmark_F11");
+        else if (chest || hips || buttocks || shoulders || waist || torso) LogBodyProfile("changed");
+        bookmarkDown=bookmark;
+        return chest || hips || buttocks || shoulders || waist || torso;
+    }
+    float TheresaGarmentShape::TorsoScale() noexcept
+    {
+        return 1.0f-0.18f*std::clamp(liveTorsoNarrowing.load(),0.0f,1.5f);
+    }
+    float TheresaGarmentShape::WaistScale() noexcept
+    {
+        // Spine1 local X is longitudinal. Narrow only its cross section;
+        // chest, clavicle, pelvis and limb factors stay independent.
+        return 1.0f-0.20f*std::clamp(liveWaistNarrowing.load(),0.0f,1.5f);
+    }
+    TheresaGarmentShape::ShoulderProfile TheresaGarmentShape::ShoulderScales() noexcept
+    {
+        // Native006DED70 does not inherit mesh scale. An inverse UpperArm
+        // factor lengthens its ForeArm child translation instead of cancelling
+        // the clavicle scale. Only shorten clavicle X; arms stay neutral.
+        return {0.86f-0.12f*std::clamp(liveShoulderNarrowing.load(),0.0f,1.5f),1.0f};
     }
 }

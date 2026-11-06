@@ -198,7 +198,7 @@ namespace
 
     bool ResolvePresentation(
         void* nativeThing,
-        ResolvedPresentation& result) noexcept
+        ResolvedPresentation& result,bool graphicOnly=false) noexcept
     {
         result = {};
         if (nativeThing == nullptr)
@@ -217,8 +217,7 @@ namespace
         __try
         {
             auto* const thing = static_cast<std::uint8_t*>(nativeThing);
-            result.graphic = *reinterpret_cast<void**>(
-                thing + kThingGraphicOffset);
+            result.graphic = graphicOnly?nativeThing:*reinterpret_cast<void**>(thing + kThingGraphicOffset);
             if (!IsReadableRange(result.graphic, sizeof(void*)))
             {
                 return false;
@@ -560,6 +559,18 @@ namespace fable::game::hero_pawn::appearance::native
         return resolved;
     }
 
+    bool HeroMorphComponent::InspectGraphicResolution(void* graphic,HeroMorphResolutionState& state) noexcept
+    {
+        state={};
+        ResolvedPresentation presentation;
+        if (!ResolvePresentation(graphic,presentation,true)) return false;
+        state.graphic=presentation.graphic;state.graphicBridge=presentation.graphicBridge;
+        state.pawn=presentation.pawn;state.skeletalMeshComponent=presentation.skeletalMesh;
+        state.referenceBoneCount=presentation.referenceBoneCount;state.animTree=presentation.animTree;
+        state.massBoneScaling=presentation.massBoneScaling;
+        return true;
+    }
+
     bool HeroMorphComponent::SetUpdateRequested(
         void* nativeThing,
         bool requested) noexcept
@@ -694,9 +705,16 @@ namespace fable::game::hero_pawn::appearance::native
 
     bool HeroMorphComponent::ApplyTheresaShape(void* nativeThing,
         TheresaVisualShapeState& state, bool restore) noexcept
+    { return ApplyTheresaShapeImpl(nativeThing,state,restore,false); }
+
+    bool HeroMorphComponent::ApplyTheresaGraphicShape(void* graphic,TheresaVisualShapeState& state) noexcept
+    { return ApplyTheresaShapeImpl(graphic,state,false,true); }
+
+    bool HeroMorphComponent::ApplyTheresaShapeImpl(void* nativeThing,
+        TheresaVisualShapeState& state,bool restore,bool graphicOnly) noexcept
     {
         ResolvedPresentation presentation;
-        if (!ResolvePresentation(nativeThing,presentation) || presentation.referenceBoneCount!=91) return false;
+        if (!ResolvePresentation(nativeThing,presentation,graphicOnly) || presentation.referenceBoneCount!=91) return false;
         if (state.controller!=presentation.massBoneScaling)
         {
             state={};
@@ -708,22 +726,34 @@ namespace fable::game::hero_pawn::appearance::native
         // while parent scale affects the child translation separately: do NOT
         // invert Spine3 as if this were a conventional inherited scale chain.
         const float chestDepth=TheresaGarmentShape::BoneDepthScale(presentation.skeletalMesh);
+        const auto lower=TheresaGarmentShape::LowerBodyScales();
+        const auto shoulder=TheresaGarmentShape::ShoulderScales();
+        const float waist=TheresaGarmentShape::WaistScale();
+        const float torso=TheresaGarmentShape::TorsoScale();
         constexpr const char* names[]={"Bip01_PelvisS0","Bip01_SpineS0","Bip01_Spine1S0","Bip01_Spine2S0",
               "Bip01_Spine3S0","Bip01_L_ClavicleS0","Bip01_R_ClavicleS0",
               "Bip01_L_UpperArmS0","Bip01_R_UpperArmS0","Bip01_L_ThighS0","Bip01_R_ThighS0"};
           const NativeVector3 factors[]={
-              {1.035f,1.035f,1.035f},
-              {1.0f/1.035f,1.0f/1.035f,1.0f/1.035f},
-              {0.97f,0.97f,0.97f},
-              {1.0f/0.97f,chestDepth/0.97f,1.0f/0.97f},
-              {1.0f,1.0f,1.0f},
-              {0.86f,0.86f,0.86f},{0.86f,0.86f,0.86f},
-              // UpperArm origins inherit the shorter clavicles, bringing
-              // shoulders inward. Cancel scale at the arm roots so forearms,
-              // hands and weapon attachments retain their visual size.
-              {1.0f/0.86f,1.0f/0.86f,1.0f/0.86f},{1.0f/0.86f,1.0f/0.86f,1.0f/0.86f},
-              {1.0f/1.035f,1.0f/1.035f,1.0f/1.035f},
-              {1.0f/1.035f,1.0f/1.035f,1.0f/1.035f}};
+              {1.035f,1.035f*lower.pelvisDepth,1.035f*lower.pelvisWidth},
+              // Thigh roots are children of Spine, not Pelvis. Its local Z
+              // widens their spacing; Spine1/upper body keep their own scale.
+              {1.0f/1.035f,1.0f/1.035f,lower.hipSpacing/1.035f},
+              // Apply all three torso bones: native scales are independent.
+              // Preserve longitudinal X and the painted chest depth ratio.
+              {0.97f,0.97f*waist*torso,0.97f*waist*torso},
+              {1.0f/0.97f,chestDepth*torso/0.97f,torso/0.97f},
+              {1.0f,torso,torso},
+              // UpperArm origin is +12.68056 along clavicle local X. Shorten
+              // only this axis to move the shoulder joint towards the neck.
+              {shoulder.clavicleLength,1,1},{shoulder.clavicleLength,1,1},
+              // Scales here are per-bone. Reciprocal compensation lengthened
+              // the upper arms and moved elbows outwards; leave arms neutral.
+              {shoulder.upperArmScale,shoulder.upperArmScale,shoulder.upperArmScale},
+              {shoulder.upperArmScale,shoulder.upperArmScale,shoulder.upperArmScale},
+              // Native scales are per-bone, not inherited mesh scales. Keep
+              // calf/foot scales and thigh longitudinal X at their old values.
+              {1.0f/1.035f,lower.thighDepth/1.035f,lower.thighWidth/1.035f},
+              {1.0f/1.035f,lower.thighDepth/1.035f,lower.thighWidth/1.035f}};
           std::array<NativeVector3,91> profile;
           profile.fill(NativeVector3{});
         for (std::size_t i=0;i<std::size(names);++i)

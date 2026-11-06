@@ -3,9 +3,13 @@
 #include "Game/HeroPawn/Appearance/Native/HeroMorphComponent.h"
 #include "Game/HeroPawn/Appearance/Native/HeroClothingComponent.h"
 #include "Game/HeroPawn/Appearance/Native/TheresaGarmentShape.h"
+#include "Game/HeroPawn/Appearance/TheresaVisibilityPolicy.h"
+#include "Game/Native/Addresses.h"
+#include "Game/Native/ScriptTypes.h"
 
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 
 namespace
 {
@@ -55,6 +59,75 @@ namespace
     constexpr std::uintptr_t CommandAllocateRva=0x01C52620;
     constexpr std::uintptr_t CommandSubmitRva=0x01C52B90;
     std::atomic_bool cutsceneHidden{false};
+    std::array<int,6> emptyClothing{};
+    // Native rotating UI actor: SetMesh has a streaming completion re-entry;
+    // its destructor removes our bounded registry before native components die.
+    constexpr std::uintptr_t PreviewSetMeshRva=0x01C2E130;
+    constexpr std::uintptr_t PreviewDestructorRva=0x01C2C3B0;
+    constexpr std::uintptr_t PreviewVtableRva=0x02B43B6C;
+    constexpr std::uintptr_t GenericPreviewSetMeshRva=0x01C2EB60;
+    constexpr std::uintptr_t GenericPreviewDestructorRva=0x01C2C5B0;
+    constexpr std::uintptr_t GenericPreviewVtableRva=0x02B4431C;
+    constexpr std::uintptr_t SetParentAnimationRva=0x00704E10;
+    constexpr std::uintptr_t AttachComponentRva=0x006878F0;
+    constexpr std::uintptr_t ConstructComponentRva=0x001E1050;
+    constexpr std::uintptr_t SetPreviewAssetRva=0x0070C930;
+    constexpr std::uintptr_t ConstructPreviewNameRva=0x001D1100;
+    fable::core::hooking::InlineHook previewSetPatch,previewDestroyPatch;
+    fable::core::hooking::InlineHook genericPreviewSetPatch,genericPreviewDestroyPatch;
+    using PreviewSet=void(__thiscall*)(void*,void*,int); // RET8; streaming callback passes option=-1.
+    using PreviewDestroy=void(__thiscall*)(void*);
+    PreviewSet originalPreviewSet=nullptr;
+    PreviewDestroy originalPreviewDestroy=nullptr;
+    using GenericPreviewSet=void(__thiscall*)(void*,void*,int,int); // RET0C.
+    GenericPreviewSet originalGenericPreviewSet=nullptr;
+    PreviewDestroy originalGenericPreviewDestroy=nullptr;
+    struct PreviewEntry { void* actor=nullptr;std::array<void*,64> layers{}; };
+    std::array<PreviewEntry,4> previews;
+    std::recursive_mutex previewMutex;
+    // Clothing menu owns a separate CThing plus independent graphics handles;
+    // it never calls the rotating-item SetMesh helpers above.
+    constexpr std::uintptr_t InventoryTickRva=0x019F67C8; // CTCInventoryClothing::vf28, RET4
+    constexpr std::uintptr_t InventoryCloseRva=0x019FC45B; // vf33, RET0
+    constexpr std::uintptr_t InventoryReleaseRva=0x019F4DC9; // vf89, RET0
+    constexpr std::uintptr_t InventoryLightingRva=0x01C49C90; // queue Handler UI lighting, RET4
+    std::atomic_uint32_t garmentShapeDirty{0};
+    fable::core::hooking::InlineHook inventoryTickPatch,inventoryClosePatch,inventoryReleasePatch;
+    using InventoryTick=void(__thiscall*)(void*,unsigned int);
+    using InventoryEnd=void(__thiscall*)(void*);
+    InventoryTick originalInventoryTick=nullptr;
+    InventoryEnd originalInventoryClose=nullptr,originalInventoryRelease=nullptr;
+    struct InventoryContext
+    {
+        std::atomic<void*> inventory{nullptr},clone{nullptr},owner{nullptr},graphic{nullptr};
+        std::atomic<unsigned int> coverage{~0u}; // Unknown until clone modifiers are readable.
+    } inventoryContext;
+
+    bool ResolveEmptyClothing(std::uintptr_t base) noexcept
+    {
+        if (emptyClothing[5]>0) return true;
+        __try
+        {
+            using namespace fable::game::native;
+            void* manager=*reinterpret_cast<void**>(base+rva::ThingManagerSlot);
+            void* definitions=manager?*reinterpret_cast<void**>(static_cast<unsigned char*>(manager)+0x2C):nullptr;
+            if (!definitions) return false;
+            constexpr const char* names[]={"OBJECT_HERO_NO_HAT","OBJECT_HERO_NO_SHIRT","OBJECT_HERO_NO_GLOVES",
+                "OBJECT_HERO_NO_TROUSERS","OBJECT_HERO_NO_BOOTS","HERO_SUIT_NAKED"};
+            std::array<int,6> resolved{};
+            for (int i=0;i<6;++i)
+            {
+                CharString name;
+                reinterpret_cast<void(__thiscall*)(CharString*,const char*,int)>(base+rva::CharStringConstructor)(&name,names[i],-1);
+                __try { resolved[i]=reinterpret_cast<int(__thiscall*)(void*,CharString*)>(base+rva::DefinitionIndexByName)(definitions,&name); }
+                __finally { reinterpret_cast<void(__thiscall*)(CharString*)>(base+rva::CharStringDestructor)(&name); }
+                if (resolved[i]<=0) return false;
+            }
+            emptyClothing=resolved;
+            return true;
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
 
     template<class T> T& Field(void* object, std::size_t offset)
     {
@@ -63,18 +136,20 @@ namespace
 
     unsigned int CoveredOutfit(const fable::game::hero_pawn::appearance::HeroClothingState& clothing)
     {
-        if (!clothing.IsSane()) return 0;
-        // CTCInventoryClothing categories: head, torso, gloves, legs, feet, suit.
-        const bool suit=clothing.definitionIndices[5]>0;
-        return ((suit || clothing.definitionIndices[1]>0)?1u:0u) |
-            ((suit || clothing.definitionIndices[3]>0)?2u:0u);
+        return fable::game::hero_pawn::appearance::TheresaOutfitCoverage(clothing,emptyClothing);
     }
 
-    bool IsHeroArmMaterial(int index) noexcept
+    bool SceneHiddenFor(void* master) noexcept
     {
-        // Validated MESH_HERO material order: L_forearm, L_upperarm,
-        // R_upperarm, R_forearm. Torso, head and hands stay out of this layer.
-        return index==6 || index==8 || index==10 || index==11;
+        __try
+        {
+            void* graphic=inventoryContext.graphic.load();
+            void* pawn=graphic?Field<void*>(graphic,8):nullptr;
+            if (pawn && master && Field<void*>(pawn,0x384)==master) return false;
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) {}
+        return fable::game::hero_pawn::appearance::TheresaHiddenForScene(cutsceneHidden.load(),
+            fable::game::hero_pawn::appearance::hooks::TheresaAppearanceHook::IsLocalHeroDriverMesh(master));
     }
 
     void MaskWholeMesh(void* mesh,std::uintptr_t base)
@@ -149,6 +224,87 @@ namespace
         return false;
     }
 
+    void* PreviewMain(void* actor,std::uintptr_t base) noexcept
+    {
+        if (!actor) return nullptr;
+        const auto type=Field<std::uintptr_t>(actor,0);
+        if (type==base+PreviewVtableRva) return Field<void*>(actor,0x1CC);
+        if (type==base+GenericPreviewVtableRva) return Field<void*>(actor,0x218);
+        return nullptr;
+    }
+
+    bool IsHeroPreview(void* actor,void* master,std::uintptr_t base) noexcept
+    {
+        __try
+        {
+            if (!actor || !master) return false;
+            if ((Field<unsigned int>(actor,0xC)&0x20000000u) || (Field<unsigned char>(actor,0xB0)&8u)) return false;
+            void* mesh=PreviewMain(actor,base);
+            void* asset=mesh?Field<void*>(mesh,0x1E4):nullptr;
+            void* source=Field<void*>(master,0x1E4);
+            if (!asset || !source || Field<int>(asset,0x98)!=91 || Field<int>(asset,0x5C)<1 || Field<int>(asset,0x5C)>64 ||
+                Field<int>(source,0x98)!=91) return false;
+            // Menu assets can be private copies. Match the complete Hero
+            // skeleton, not UObject pointer identity with the world asset.
+            auto* a=Field<std::uint8_t*>(asset,0x94);
+            auto* b=Field<std::uint8_t*>(source,0x94);
+            if (!a || !b) return false;
+            for (int i=0;i<91;++i) if (std::memcmp(a+i*BoneStride,b+i*BoneStride,8)) return false;
+            return true;
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
+    void DescribePreview(void* actor,std::uintptr_t base,char* detail,std::size_t size) noexcept
+    {
+        __try
+        {
+            void* mesh=PreviewMain(actor,base);
+            void* asset=mesh?Field<void*>(mesh,0x1E4):nullptr;
+            char name[128]={};if (asset) AssetName(asset,base,name,sizeof(name));
+            std::snprintf(detail,size,"actor=%p main=%p asset=%s bones=%d materials=%d",
+                actor,mesh,name,asset?Field<int>(asset,0x98):0,asset?Field<int>(asset,0x5C):0);
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { std::snprintf(detail,size,"actor=%p layout=unavailable",actor); }
+    }
+
+    bool ValidateVisibilityHelpers(std::uintptr_t base)
+    {
+        const auto bytes=[&](std::uintptr_t rva,const unsigned char* expected,std::size_t size)
+        { return !std::memcmp(reinterpret_cast<void*>(base+rva),expected,size); };
+        const unsigned char parent[]={0x8B,0x44,0x24,0x04,0x89,0x81,0x9C,0x02,0x00,0x00};
+        const unsigned char setMesh[]={0x55,0x8B,0xEC,0x83,0xE4,0xF0};
+        const unsigned char name[]={0x8B,0x44,0x24,0x08,0x56,0x50,0x8B};
+        const unsigned char string[]={0x56,0x8B,0xF1,0xC7,0x06,0,0,0,0};
+        const unsigned char lookup[]={0x8B,0x54,0x24,0x04,0x8B,0x02};
+        const unsigned char destroy[]={0x56,0x57,0x8B,0xF9,0x8B,0x37};
+        const unsigned char lighting[]={0x56,0x8B,0x74,0x24,0x08,0x85,0xF6};
+        unsigned char construct[]={0x6A,0xFF,0x68,0,0,0,0};
+        unsigned char attach[]={0x55,0x8B,0xEC,0x83,0xE4,0xF0,0x6A,0xFF,0x68,0,0,0,0};
+        const auto constructHandler=static_cast<unsigned int>(base+0x0239D003);
+        const auto attachHandler=static_cast<unsigned int>(base+0x023CC5A0);
+        std::memcpy(construct+3,&constructHandler,4);std::memcpy(attach+9,&attachHandler,4);
+        using namespace fable::game::native;
+        return bytes(SetParentAnimationRva,parent,sizeof(parent)) && bytes(SetPreviewAssetRva,setMesh,sizeof(setMesh)) &&
+            bytes(ConstructPreviewNameRva,name,sizeof(name)) && bytes(ConstructComponentRva,construct,sizeof(construct)) &&
+            bytes(AttachComponentRva,attach,sizeof(attach)) && bytes(rva::CharStringConstructor,string,sizeof(string)) &&
+            bytes(rva::DefinitionIndexByName,lookup,sizeof(lookup)) && bytes(rva::CharStringDestructor,destroy,sizeof(destroy)) &&
+            bytes(InventoryLightingRva,lighting,sizeof(lighting));
+    }
+
+    void DetachPreviewParents(void* master,std::uintptr_t base)
+    {
+        if (!master) return;
+        std::lock_guard<std::recursive_mutex> lock(previewMutex);
+        for (auto& preview:previews) if (preview.actor)
+            for (void* layer:preview.layers)
+                if (layer && Field<void*>(layer,0x29C)==master)
+                {
+                    reinterpret_cast<void(__thiscall*)(void*,unsigned int)>(base+SetHiddenRva)(layer,1);
+                    reinterpret_cast<void(__thiscall*)(void*,void*)>(base+SetParentAnimationRva)(layer,nullptr);
+                }
+    }
+
     bool PatchCall(fable::core::hooking::CodePatch& patch, std::uintptr_t site,
         std::uintptr_t expectedTarget, const void* replacement) noexcept
     {
@@ -195,7 +351,8 @@ namespace fable::game::hero_pawn::appearance::hooks
         std::memcpy(sectionSignature+3,&sectionHandler,sizeof(sectionHandler));
         std::memcpy(packageSignature+6,&packageHandler,sizeof(packageHandler));
         std::memcpy(objectSignature+6,&objectHandler,sizeof(objectHandler));
-        if (std::memcmp(reinterpret_cast<void*>(base+ObjectNameRva),objectNameSignature,sizeof(objectNameSignature)) ||
+        if (!ValidateVisibilityHelpers(base) ||
+            std::memcmp(reinterpret_cast<void*>(base+ObjectNameRva),objectNameSignature,sizeof(objectNameSignature)) ||
             std::memcmp(reinterpret_cast<void*>(base+FreeArrayRva),freeSignature,sizeof(freeSignature)) ||
             std::memcmp(reinterpret_cast<void*>(base+SetMaterialRva),materialSignature,sizeof(materialSignature)) ||
             std::memcmp(reinterpret_cast<void*>(base+ShowMaterialSectionRva),sectionSignature,sizeof(sectionSignature)) ||
@@ -255,11 +412,79 @@ namespace fable::game::hero_pawn::appearance::hooks
         }
         diagnostics_.Event("MultiplayerTheresaHeroSkinReady",
             "Hero owns skeleton/animations/weapons; Sister is an additional render mesh; fit=unverified");
+        std::uint8_t previewSignature[]={0x6A,0xFF,0x68,0,0,0,0};
+        auto previewHandler=base+0x02566628;
+        std::memcpy(previewSignature+3,&previewHandler,4);
+        std::uint8_t destroySignature[]={0x6A,0xFF,0x68,0,0,0,0};
+        auto destroyHandler=base+0x025663E4;
+        std::memcpy(destroySignature+3,&destroyHandler,4);
+        if (!previewDestroyPatch.Install(reinterpret_cast<void*>(base+PreviewDestructorRva),destroySignature,7,
+                reinterpret_cast<void*>(&DestroyPreview),7))
+        { Shutdown();diagnostics_.Event("MultiplayerTheresaPreviewRejected","destructor signature mismatch");return false; }
+        originalPreviewDestroy=reinterpret_cast<PreviewDestroy>(previewDestroyPatch.Original());
+        if (!previewSetPatch.Install(reinterpret_cast<void*>(base+PreviewSetMeshRva),previewSignature,7,
+                reinterpret_cast<void*>(&SetPreviewMesh),7))
+        { Shutdown();diagnostics_.Event("MultiplayerTheresaPreviewRejected","SetMesh signature mismatch");return false; }
+        originalPreviewSet=reinterpret_cast<PreviewSet>(previewSetPatch.Original());
+        previewHandler=base+0x02566728;
+        destroyHandler=base+0x02566448;
+        std::memcpy(previewSignature+3,&previewHandler,4);std::memcpy(destroySignature+3,&destroyHandler,4);
+        if (!genericPreviewDestroyPatch.Install(reinterpret_cast<void*>(base+GenericPreviewDestructorRva),destroySignature,7,
+                reinterpret_cast<void*>(&DestroyGenericPreview),7))
+        { Shutdown();diagnostics_.Event("MultiplayerTheresaPreviewRejected","generic destructor signature mismatch");return false; }
+        originalGenericPreviewDestroy=reinterpret_cast<PreviewDestroy>(genericPreviewDestroyPatch.Original());
+        if (!genericPreviewSetPatch.Install(reinterpret_cast<void*>(base+GenericPreviewSetMeshRva),previewSignature,7,
+                reinterpret_cast<void*>(&SetGenericPreviewMesh),7))
+        { Shutdown();diagnostics_.Event("MultiplayerTheresaPreviewRejected","generic SetMesh signature mismatch");return false; }
+        originalGenericPreviewSet=reinterpret_cast<GenericPreviewSet>(genericPreviewSetPatch.Original());
+        unsigned char tickSignature[]={0x6A,0x6C,0xB8,0,0,0,0};
+        const auto tickHandler=static_cast<unsigned int>(base+0x02536685);
+        std::memcpy(tickSignature+3,&tickHandler,4);
+        const unsigned char closeSignature[]={0x51,0x53,0x56,0x8B,0xF1,0x57};
+        const unsigned char releaseSignature[]={0x56,0x8D,0xB1,0xB8,0x01,0x00,0x00};
+        if (!inventoryTickPatch.Install(reinterpret_cast<void*>(base+InventoryTickRva),tickSignature,7,
+                reinterpret_cast<void*>(&TickInventory),7))
+        { Shutdown();diagnostics_.Event("MultiplayerTheresaInventoryRejected","inventory tick signature mismatch");return false; }
+        originalInventoryTick=reinterpret_cast<InventoryTick>(inventoryTickPatch.Original());
+        if (!inventoryClosePatch.Install(reinterpret_cast<void*>(base+InventoryCloseRva),closeSignature,6,
+                reinterpret_cast<void*>(&CloseInventory),6))
+        { Shutdown();diagnostics_.Event("MultiplayerTheresaInventoryRejected","inventory close signature mismatch");return false; }
+        originalInventoryClose=reinterpret_cast<InventoryEnd>(inventoryClosePatch.Original());
+        if (!inventoryReleasePatch.Install(reinterpret_cast<void*>(base+InventoryReleaseRva),releaseSignature,7,
+                reinterpret_cast<void*>(&ReleaseInventory),7))
+        { Shutdown();diagnostics_.Event("MultiplayerTheresaInventoryRejected","inventory release signature mismatch");return false; }
+        originalInventoryRelease=reinterpret_cast<InventoryEnd>(inventoryReleasePatch.Original());
+        diagnostics_.Event("MultiplayerTheresaPublicationRestored","native component/eye attachment restored; no synchronous visibility reconciliation inside AddSkin");
+        diagnostics_.Event("MultiplayerTheresaInventoryReady","clothing clone+1B8 graphics+2CC; own Hero driver; close/release lifetime guarded");
+        diagnostics_.Event("MultiplayerTheresaPreviewReady","rotating Hero preview mirrors local body/clothes; destructor tracked");
         return true;
     }
 
     bool TheresaHeroSkin::Shutdown() noexcept
     {
+        garmentShapeDirty.store(0);
+        ForgetInventory(inventoryContext.inventory.load());
+        if (!inventoryTickPatch.Shutdown() || !inventoryClosePatch.Shutdown() || !inventoryReleasePatch.Shutdown()) return false;
+        originalInventoryTick=nullptr;originalInventoryClose=nullptr;originalInventoryRelease=nullptr;
+        if (module_ && originalHidden_ && originalSection_)
+        {
+            const auto base=reinterpret_cast<std::uintptr_t>(module_);
+            for (auto& entry:entries_) DetachPreviewParents(entry.master.load(),base);
+            std::lock_guard<std::recursive_mutex> lock(previewMutex);
+            for (auto& preview:previews) if (preview.actor)
+            {
+                void* main=PreviewMain(preview.actor,base);
+                void* asset=main?Field<void*>(main,0x1E4):nullptr;
+                if (asset) for (int lod=0;lod<Field<int>(asset,0xE4) && lod<8;++lod)
+                    for (int part=0;part<Field<int>(asset,0x5C) && part<64;++part) originalSection_(main,part,1,lod);
+                if (main) originalHidden_(main,0);
+            }
+        }
+        if (!genericPreviewSetPatch.Shutdown() || !genericPreviewDestroyPatch.Shutdown() ||
+            !previewSetPatch.Shutdown() || !previewDestroyPatch.Shutdown()) return false;
+        originalGenericPreviewSet=nullptr;originalGenericPreviewDestroy=nullptr;
+        originalPreviewSet=nullptr;originalPreviewDestroy=nullptr;
+        { std::lock_guard<std::recursive_mutex> lock(previewMutex);previews={}; }
         if (!pawnCastCallPatch.Shutdown() || !streamingCheckCallPatch.Shutdown() ||
             !meshLoadCallPatch.Shutdown()) return false;
         if (!addPatch_.Shutdown()) return false;
@@ -309,6 +534,7 @@ namespace fable::game::hero_pawn::appearance::hooks
         for (auto& entry:hook->entries_)
             if (entry.thing.load()==thing)
             {
+                DetachPreviewParents(entry.master.load(),reinterpret_cast<std::uintptr_t>(hook->module_));
                 // No stale pawn dereference here: native world retirement owns
                 // destruction of the additional mesh and queued commands.
                 entry.graphic.store(nullptr,std::memory_order_release);
@@ -331,11 +557,16 @@ namespace fable::game::hero_pawn::appearance::hooks
     }
 
     void TheresaHeroSkin::Update(void* thing, bool childhood) noexcept
+    { UpdateImpl(thing,childhood,nullptr); }
+
+    void TheresaHeroSkin::UpdateImpl(void* thing,bool childhood,void* graphicOverride) noexcept
     {
         auto* hook=active_;
-        if (!hook || !TheresaAppearanceHook::UsesTheresaPresentation(thing)) return;
+        if (!hook || !thing || (!graphicOverride && !TheresaAppearanceHook::UsesTheresaPresentation(thing))) return;
         native::HeroMorphResolutionState resolved;
-        if (!native::HeroMorphComponent::InspectResolution(thing,resolved)) return;
+        if (graphicOverride)
+        { if (!native::HeroMorphComponent::InspectGraphicResolution(graphicOverride,resolved)) return; }
+        else if (!native::HeroMorphComponent::InspectResolution(thing,resolved)) return;
         Entry* entry=hook->FindGraphic(resolved.graphic);
         if (entry && entry->master.load()!=resolved.skeletalMeshComponent)
         {
@@ -357,7 +588,7 @@ namespace fable::game::hero_pawn::appearance::hooks
                 candidate.armsQueued.store(false);
                 candidate.nextVisualAt=0;
                 candidate.outfitRefreshAt=GetTickCount64()+1500;
-                candidate.outfitRefreshAttempts=childhood?0u:3u;
+                candidate.outfitRefreshAttempts=childhood || graphicOverride?0u:3u;
                 candidate.visibleBeforeSceneCount=0;
                 candidate.sceneWasHidden=false;
                 candidate.shape={};
@@ -373,13 +604,20 @@ namespace fable::game::hero_pawn::appearance::hooks
             }
         }
         if (!entry) return;
+        const auto dirtyBit=1u<<static_cast<unsigned int>(entry-hook->entries_.data());
+        if (garmentShapeDirty.fetch_and(~dirtyBit)&dirtyBit) entry->nextShapeAt=0;
+        if (!childhood && TheresaAppearanceHook::IsLocalHeroDriverMesh(resolved.skeletalMeshComponent) &&
+            native::TheresaGarmentShape::TickSizeHotkeys())
+            entry->nextShapeAt=0; // Apply this step on the same simulation tick.
         if (!childhood && GetTickCount64()>=entry->nextShapeAt)
         {
             entry->nextShapeAt=GetTickCount64()+500;
             const bool first=entry->shape.controller==nullptr;
-            if (native::HeroMorphComponent::ApplyTheresaShape(thing,entry->shape) && first)
+            const bool shaped=graphicOverride?native::HeroMorphComponent::ApplyTheresaGraphicShape(graphicOverride,entry->shape):
+                native::HeroMorphComponent::ApplyTheresaShape(thing,entry->shape);
+            if (shaped && first)
                 hook->diagnostics_.Event("MultiplayerTheresaVisualShapeApplied",
-                    "adult visual bones only; progression_influence=0.20 progression_bounds=0.98..1.04 clavicles0.86 arm_roots_compensated waist0.97 pelvis1.035 chest=painted_weights_native_bone_depth; gameplay=unchanged fit=unverified");
+                    "adult visual bones only; progression_influence=0.20 progression_bounds=0.98..1.04 clavicles=dynamic upper_arms=neutral waist0.97 pelvis=dynamic chest=painted_weights_native_bone_depth; gameplay=unchanged fit=unverified");
         }
         void* skin=entry->skin.load(std::memory_order_acquire);
         if (skin && !ContainsSkin(resolved.pawn,skin))
@@ -435,8 +673,24 @@ namespace fable::game::hero_pawn::appearance::hooks
             HeroClothingState clothing;
             // Childhood can have no clothing inventory. Cutscene visibility
             // must still update for that presentation.
-            const bool capturedClothing=native::HeroClothingComponent::Capture(thing,clothing);
-            entry->outfitMask.store(!entry->childhood.load() && capturedClothing?CoveredOutfit(clothing):0);
+            const bool capturedClothing=graphicOverride?
+                native::HeroClothingComponent::CapturePreview(inventoryContext.owner.load(),clothing):
+                native::HeroClothingComponent::Capture(thing,clothing);
+            ResolveEmptyClothing(reinterpret_cast<std::uintptr_t>(hook->module_));
+            if (graphicOverride)
+            {
+                const unsigned int mask=capturedClothing?CoveredOutfit(clothing):~0u;
+                if (inventoryContext.coverage.exchange(mask)!=mask)
+                {
+                    char detail[256]={};
+                    std::snprintf(detail,sizeof(detail),"coverage=%u valid=%u ids=%d,%d,%d,%d,%d,%d source=enabled-clone-modifiers",
+                        mask,capturedClothing?1u:0u,clothing.definitionIndices[0],clothing.definitionIndices[1],
+                        clothing.definitionIndices[2],clothing.definitionIndices[3],clothing.definitionIndices[4],clothing.definitionIndices[5]);
+                    hook->diagnostics_.Event("MultiplayerTheresaInventoryOutfit",detail);
+                }
+            }
+            entry->outfitMask.store(!entry->childhood.load() && capturedClothing?
+                CoveredOutfit(clothing)|(entry->outfitMask.load()&(32u|64u)):0);
             {
                 std::uint64_t key=cutsceneHidden.load()?2:1;
                 if (capturedClothing)
@@ -447,7 +701,7 @@ namespace fable::game::hero_pawn::appearance::hooks
                 const bool changed=entry->visualKey.exchange(key)!=key;
                 if (changed || now>=entry->nextVisualAt)
                 {
-                    entry->nextVisualAt=now+500;
+                    entry->nextVisualAt=now+(graphicOverride?100:500);
                     const auto base=reinterpret_cast<std::uintptr_t>(hook->module_);
                     using Allocate=void*(__cdecl*)(unsigned int,unsigned int);
                     using Submit=void(__cdecl*)(void(__cdecl*)(void*),void*);
@@ -571,6 +825,7 @@ namespace fable::game::hero_pawn::appearance::hooks
             for (auto& entry:hook->entries_)
             {
                 if (entry.thing.load()!=thing) continue;
+                hidden=TheresaHiddenForScene(hidden,TheresaAppearanceHook::IsLocalHeroDriverMesh(entry.master.load()));
                 void* graphic=entry.graphic.load();
                 void* skin=entry.skin.load();
                 void* master=entry.master.load();
@@ -588,12 +843,12 @@ namespace fable::game::hero_pawn::appearance::hooks
                 {
                     HeroClothingState clothing;
                     if (!native::HeroClothingComponent::Capture(thing,clothing)) return false;
-                    const auto mask=CoveredOutfit(clothing);
+                    const auto mask=(CoveredOutfit(clothing)&~16u)|(entry.outfitMask.load()&(16u|32u|64u));
                     if (!(Field<unsigned int>(master,0x128)&4u)) return false;
                     void* arms=entry.arms.load();
                     if (!arms || !ContainsSkin(pawn,arms) || Field<void*>(arms,0x29C)!=master ||
                         Field<void*>(arms,0x1E4)!=Field<void*>(master,0x1E4) || Field<int>(arms,0x2A4)!=91 ||
-                        ((Field<unsigned int>(arms,0x128)&4u)!=0)!=(hidden || !(mask&1u))) return false;
+                        ((Field<unsigned int>(arms,0x128)&4u)!=0)!=hidden) return false;
                     auto* armMap=Field<int*>(arms,0x2A0);
                     if (!armMap) return false;
                     for (int bone=0;bone<91;++bone) if (armMap[bone]!=bone) return false;
@@ -603,21 +858,21 @@ namespace fable::game::hero_pawn::appearance::hooks
                         auto* bodyFlags=Field<unsigned int*>(armLod,0);
                         if (!bodyFlags) return false;
                         for (int part=0;part<18;++part)
-                            if (bodyFlags[part]!=((mask&1u) && IsHeroArmMaterial(part)?0u:1u)) return false;
+                            if (bodyFlags[part]!=(TheresaBodyMaterialVisible(part,mask)?0u:1u)) return false;
                     }
                     // Native LOD0 hidden-material array: actual state, not our cache.
                     void* lod=Field<void*>(skin,0x3D4);
                     if (!lod || Field<int>(lod,4)!=4) return false;
                     auto* flags=Field<unsigned int*>(lod,0);
                     if (!flags || flags[0]!=(mask&1u?1u:0u) || flags[1]!=(mask&2u?1u:0u) ||
-                        flags[2] || flags[3]) return false;
+                        flags[2] || flags[3]!=(mask&16u?1u:0u)) return false;
                     void* limbs=entry.limbs.load();
                     if (!limbs || !ContainsSkin(pawn,limbs) || Field<void*>(limbs,0x29C)!=master ||
-                        Field<int>(limbs,0x2A4)!=80 || ((Field<unsigned int>(limbs,0x128)&4u)!=0)!=hidden) return false;
+                        Field<int>(limbs,0x2A4)!=80 || !(Field<unsigned int>(limbs,0x128)&4u)) return false;
                     void* limbLod=Field<void*>(limbs,0x3D4);
                     if (!limbLod || Field<int>(limbLod,4)!=4) return false;
                     auto* limbFlags=Field<unsigned int*>(limbLod,0);
-                    if (!limbFlags || limbFlags[0]!=(mask&1u?0u:1u) || limbFlags[1]!=(mask&2u?0u:1u) ||
+                    if (!limbFlags || !limbFlags[0] || !limbFlags[1] ||
                         !limbFlags[2] || !limbFlags[3]) return false;
                     void* limbAsset=Field<void*>(limbs,0x1E4);
                     if (Field<int>(limbs,0x1DC)!=4 || !limbAsset || Field<int>(limbAsset,0x5C)!=4) return false;
@@ -682,11 +937,26 @@ namespace fable::game::hero_pawn::appearance::hooks
                 reinterpret_cast<std::uintptr_t>(hook->module_)+SkeletalComponentVtableRva)
             {
                 void* parent=Field<void*>(mesh,0x29C);
+                if (parent && hook->IsDriver(parent) && Field<void*>(mesh,0x1E4))
+                {
+                    char name[128]={};AssetName(Field<void*>(mesh,0x1E4),reinterpret_cast<std::uintptr_t>(hook->module_),name,sizeof(name));
+                    if (std::strstr(name,"BANDITCAMP_HEAD") || TheresaHeroFacialMesh(name)) { hidden=1;blocked=true; }
+                    void* uiGraphic=inventoryContext.graphic.load();
+                    void* uiPawn=uiGraphic?Field<void*>(uiGraphic,8):nullptr;
+                    const unsigned int wanted=inventoryContext.coverage.load(),part=TheresaCoverageForMesh(name);
+                    if (uiPawn && Field<void*>(uiPawn,0x384)==parent && wanted!=~0u && (part&wanted)!=part)
+                    { hidden=1;blocked=true; }
+                }
                 if (parent && hook->IsDriver(parent) && Field<void*>(mesh,0x1E4)==Field<void*>(parent,0x1E4))
                 {
                     bool current=false;
+                    unsigned int coverage=0;
                     for (const auto& entry:hook->entries_)
-                        if (entry.arms.load()==mesh && entry.master.load()==parent) current=true;
+                        if (entry.master.load()==parent)
+                        { coverage=entry.outfitMask.load();if (entry.arms.load()==mesh) current=true; }
+                    void* owner=Field<void*>(mesh,0x4C);
+                    if (PreviewMain(owner,reinterpret_cast<std::uintptr_t>(hook->module_)))
+                        current=true; // Body-only UI follower, same head guard.
                     void* asset=Field<void*>(mesh,0x1E4);
                     const int lods=Field<int>(mesh,0x3D8);
                     auto* info=Field<std::uint8_t*>(mesh,0x3D4);
@@ -697,7 +967,7 @@ namespace fable::game::hero_pawn::appearance::hooks
                         auto* flags=Field<unsigned int*>(record,0);
                         if (Field<int>(record,4)!=18 || !flags) { masked=false; break; }
                         for (int part=0;part<18;++part)
-                            if (!IsHeroArmMaterial(part) && !flags[part]) masked=false;
+                            if (flags[part]!=(TheresaBodyMaterialVisible(part,coverage)?0u:1u)) masked=false;
                     }
                     if (!masked) { hidden=1; blocked=true; }
                 }
@@ -728,7 +998,13 @@ namespace fable::game::hero_pawn::appearance::hooks
                         auto* info=Field<std::uint8_t*>(asset,0x130)+lod*0x48;
                         if (section>=0 && section<Field<int>(info,0xC)) material=Field<int*>(info,8)[section];
                     }
-                    if (!IsHeroArmMaterial(material)) show=0;
+                    bool current=false;
+                    unsigned int coverage=0;
+                    for (const auto& entry:hook->entries_)
+                        if (entry.master.load()==parent)
+                        { coverage=entry.outfitMask.load();if (entry.arms.load()==mesh) current=true; }
+                    if (PreviewMain(Field<void*>(mesh,0x4C),reinterpret_cast<std::uintptr_t>(hook->module_))) current=true;
+                    if (!current || !TheresaBodyMaterialVisible(material,coverage)) show=0;
                 }
             }
         }
@@ -765,6 +1041,7 @@ namespace fable::game::hero_pawn::appearance::hooks
             void* primary=entry->skin.load();
             if (!ContainsSkin(pawn,primary)) return;
             void* limb=entry->limbs.load();
+            const bool hasBody=entry->arms.load() && ContainsSkin(pawn,entry->arms.load());
             void* skinAsset=Field<void*>(primary,0x1E4);
             // Native appearance refresh can re-project Hero texture variants
             // onto additional meshes. Sister's face/hair must keep their own
@@ -804,7 +1081,8 @@ namespace fable::game::hero_pawn::appearance::hooks
                     if (!asset) continue;
                     const bool hero=driverAsset && (asset==driverAsset ||
                         Field<std::uint64_t>(asset,0x2C)==Field<std::uint64_t>(driverAsset,0x2C));
-                    if (hero && mesh!=entry->arms.load())
+                    char assetName[128]={};AssetName(asset,module,assetName,sizeof(assetName));
+                    if ((hero && mesh!=entry->arms.load()) || TheresaHeroFacialMesh(assetName))
                     { hide(mesh,1); MaskWholeMesh(mesh,module); }
                     if (report)
                     {
@@ -816,7 +1094,31 @@ namespace fable::game::hero_pawn::appearance::hooks
                         hook->diagnostics_.Event("MultiplayerTheresaRegisteredRenderComponent",detail);
                     }
                 }
-            const bool scene=cutsceneHidden.load();
+            const bool scene=SceneHiddenFor(entry->master.load());
+            const bool inventory=graphic==inventoryContext.graphic.load();
+            const unsigned int wanted=inventoryContext.coverage.load();
+            const bool selectedInventory=inventory && wanted!=~0u;
+            unsigned int coverage=inventory?(selectedInventory?wanted:0):entry->outfitMask.load()&~(32u|64u);
+            bool banditMaskHidden=false,otherHeadwear=false;
+            for (int i=0;i<count;++i)
+            {
+                void* mesh=meshes[i];
+                if (!mesh || mesh==primary || mesh==limb || mesh==entry->arms.load() ||
+                    Field<void*>(mesh,0x4C)!=pawn || !Field<void*>(mesh,0x1E4)) continue;
+                char name[128]={};AssetName(Field<void*>(mesh,0x1E4),module,name,sizeof(name));
+                const unsigned int part=TheresaCoverageForMesh(name);
+                if (TheresaHeroFacialMesh(name) || (selectedInventory && (part&wanted)!=part)) hide(mesh,1);
+                if (!(Field<unsigned int>(mesh,0x128)&4u) && (part&1u) && TheresaOpenTorsoGarment(name)) coverage|=64u;
+                if (std::strstr(name,"BANDITCAMP_HEAD"))
+                { hide(mesh,1);banditMaskHidden=true; }
+                if (!(Field<unsigned int>(mesh,0x128)&4u) && std::strstr(name,"BANDITCAMP_SHIRT")) coverage|=32u;
+                if (inventory && !selectedInventory && !(Field<unsigned int>(mesh,0x128)&4u)) coverage|=part;
+                if (!(Field<unsigned int>(mesh,0x128)&4u) &&
+                    (std::strstr(name,"_HEAD") || std::strstr(name,"_HAT") || std::strstr(name,"_HELM") || std::strstr(name,"_MASK")))
+                    otherHeadwear=true;
+            }
+            if (banditMaskHidden && !otherHeadwear) coverage&=~16u; // Mask suppressed: keep Sister hair.
+            entry->outfitMask.store(coverage);
             const bool restoreScene=entry->sceneWasHidden && !scene;
             if (scene && !entry->sceneWasHidden) entry->visibleBeforeSceneCount=0;
             // Preserve native clothing visibility. Blindly unhiding this array
@@ -826,7 +1128,7 @@ namespace fable::game::hero_pawn::appearance::hooks
                 void* mesh=meshes[i];
                 if (!mesh || mesh==entry->arms.load()) continue;
                 void* asset=Field<void*>(mesh,0x1E4);
-                if (mesh==primary || mesh==limb) { hide(mesh,scene?1:0); continue; }
+                if (mesh==primary || mesh==limb) { hide(mesh,scene || (mesh==limb && hasBody)?1:0); continue; }
                 if (asset==driverAsset || asset==skinAsset || (limbAsset && asset==limbAsset))
                 { hide(mesh,1); continue; } // Retired private helper, never clothing.
                 if (Field<void*>(mesh,0x4C)!=pawn) continue; // Detached/retired native clothing.
@@ -859,8 +1161,8 @@ namespace fable::game::hero_pawn::appearance::hooks
                 void* limbMesh=entry->limbs.load();
                 // Keep the stock outfit if the generated overlay failed to
                 // load: missing hands/feet are worse than the old overlap.
-                const unsigned mask=limbMesh && ContainsSkin(pawn,limbMesh)?entry->outfitMask.load():0;
-                void* arms=entry->arms.load();
+                const unsigned mask=hasBody || (limbMesh && ContainsSkin(pawn,limbMesh))?entry->outfitMask.load():0;
+                void* arms=hasBody?entry->arms.load():nullptr;
                 if (arms && ContainsSkin(pawn,arms))
                 {
                     hide(arms,1);
@@ -868,37 +1170,46 @@ namespace fable::game::hero_pawn::appearance::hooks
                     const int lods=armAsset?Field<int>(armAsset,0xE4):0;
                     if (armAsset && Field<int>(armAsset,0x5C)==18 && lods>=1 && lods<=8)
                     {
+                        // Native wardrobe projection also visits helpers.
+                        // Restore authored body materials so a removed outfit
+                        // cannot leave its alpha/composite texture on bare skin.
+                        auto** authored=Field<void**>(armAsset,0x58);
+                        using SetMaterial=void(__thiscall*)(void*,int,void*);
+                        for (int part=0;authored && part<16;++part)
+                        {
+                            auto** current=Field<void**>(arms,0x1D8);
+                            if (authored[part] && (!current || part>=Field<int>(arms,0x1DC) || current[part]!=authored[part]))
+                                reinterpret_cast<SetMaterial>(module+SetMaterialRva)(arms,part,authored[part]);
+                        }
                         using ShowSection=void(__thiscall*)(void*,int,int,int);
                         auto show=reinterpret_cast<ShowSection>(reinterpret_cast<std::uintptr_t>(hook->module_)+ShowMaterialSectionRva);
                         for (int lod=0;lod<lods;++lod)
                         {
-                            // ShowMaterialSection remaps the input index for
-                            // LOD>0. Select by the resulting material, so a
-                            // reduced LOD cannot accidentally enable the face.
                             void* info=static_cast<std::uint8_t*>(Field<void*>(armAsset,0x130))+lod*0x48;
                             auto* remap=Field<int*>(info,8);
                             const int remapCount=Field<int>(info,0xC);
-                            for (int part=0;part<18;++part)
+                            auto* lodArray=Field<std::uint8_t*>(arms,0x3D4);
+                            void* componentLod=lodArray && Field<int>(arms,0x3D8)>lod?lodArray+lod*0x18:nullptr;
+                            if (!componentLod || Field<int>(componentLod,4)!=18 || !Field<void*>(componentLod,0))
                             {
-                                int material=part;
-                                if (lod>0 && remap && part<remapCount) material=remap[part];
-                                if (material<0) material=0; // Native remap fallback.
-                                const bool visible=(mask&1u) && IsHeroArmMaterial(material);
-                                auto* lodArray=Field<std::uint8_t*>(arms,0x3D4);
-                                void* componentLod=lodArray && Field<int>(arms,0x3D8)>lod?lodArray+lod*0x18:nullptr;
-                                auto* flags=componentLod?Field<unsigned int*>(componentLod,0):nullptr;
-                                // The native helper synchronizes rendering:
-                                // avoid that work when its actual mask agrees.
-                                if (!flags || Field<int>(componentLod,4)!=18 ||
-                                    (material<18 && flags[material]!=(visible?0u:1u)))
-                                    show(arms,part,visible?1:0,lod);
+                                show(arms,0,0,lod);
+                                lodArray=Field<std::uint8_t*>(arms,0x3D4);
+                                componentLod=lodArray && Field<int>(arms,0x3D8)>lod?lodArray+lod*0x18:nullptr;
                             }
+                            if (!componentLod || Field<int>(componentLod,4)!=18 || !Field<void*>(componentLod,0)) continue;
+                            auto* flags=Field<unsigned int*>(componentLod,0);
+                            bool changed=false;
+                            for (int part=0;part<18;++part)
+                            { const auto desired=TheresaBodyMaterialVisible(part,mask)?0u:1u;
+                              if (flags[part]!=desired) { flags[part]=desired;changed=true; } }
+                            int first=lod>0 && remap && remapCount>0?remap[0]:0;
+                            if (first<0 || first>=18) first=0;
+                            if (changed) show(arms,0,flags[first]?0:1,lod); // Publish complete mask once.
                         }
-                        hide(arms,cutsceneHidden.load() || !(mask&1u)?1:0);
+                        hide(arms,scene?1:0);
                     }
                 }
-                if (asset && Field<int>(asset,0x98)==80 && Field<int>(asset,0x5C)==4 &&
-                    entry->appliedOutfitMask.load()!=mask)
+                if (asset && Field<int>(asset,0x98)==80 && Field<int>(asset,0x5C)==4)
                 {
                     const int lodCount=Field<int>(asset,0xE4);
                     if (lodCount<1 || lodCount>8) return;
@@ -908,27 +1219,319 @@ namespace fable::game::hero_pawn::appearance::hooks
                     {
                         show(skin,0,(mask&1u)?0:1,lod);
                         show(skin,1,(mask&2u)?0:1,lod);
+                        show(skin,2,1,lod);
+                        // Hair is a separate authored material. Suppress it
+                        // under headwear; removing headwear restores it.
+                        show(skin,3,(mask&16u)?0:1,lod);
                     }
                     void* limbs=entry->limbs.load();
                     if (limbs && ContainsSkin(pawn,limbs))
                         for (int lod=0;lod<lodCount;++lod)
                         {
-                            show(limbs,0,(mask&1u)?1:0,lod);
-                            show(limbs,1,(mask&2u)?1:0,lod);
+                            show(limbs,0,!arms && (mask&1u)?1:0,lod);
+                            show(limbs,1,!arms && (mask&2u)?1:0,lod);
                             show(limbs,2,0,lod);
                             show(limbs,3,0,lod);
                         }
-                    entry->appliedOutfitMask.store(mask);
+                    const bool changed=entry->appliedOutfitMask.exchange(mask)!=mask;
                     char detail[160]={};
-                    std::snprintf(detail,sizeof(detail),"torso_hidden=%u legs_hidden=%u lods=%d face_hair=preserved fit=unverified",
-                        mask&1u,(mask>>1)&1u,lodCount);
-                    hook->diagnostics_.Event("MultiplayerTheresaStockOutfitSectionsApplied",detail);
-                    hook->diagnostics_.Event("MultiplayerTheresaBareArmSectionsApplied",
-                        "separate Hero arm follower; driver stays hidden; arm visibility reconciled independently of outfit cache");
+                    std::snprintf(detail,sizeof(detail),"coverage=%u body_follower=%u hair_hidden=%u lods=%d face=preserved fit=unverified",
+                        mask,hasBody?1u:0u,(mask>>4)&1u,lodCount);
+                    if (changed)
+                    {
+                        hook->diagnostics_.Event("MultiplayerTheresaStockOutfitSectionsApplied",detail);
+                        hook->diagnostics_.Event("MultiplayerTheresaBodyCoverageApplied",
+                            "body-only Hero follower; exposed torso/legs/hands/feet restored; head stays Sister; hair hidden under headwear");
+                    }
                 }
+            }
+            hook->RefreshPreviews(*entry);
+            if (inventory)
+            {
+                static unsigned int applied=0;
+                if (Field<unsigned int>(primary,0x14C)==0x02000001u && applied++<8)
+                    hook->diagnostics_.Event("MultiplayerTheresaInventoryApplied",
+                        "native clothing clone; Sister follows menu animation driver; UI lighting channel and body/clothing visibility reconciled");
             }
         }
         __except(EXCEPTION_EXECUTE_HANDLER) {}
+    }
+
+    void __fastcall TheresaHeroSkin::TickInventory(void* inventory,void*,unsigned int tick)
+    {
+        if (originalInventoryTick) originalInventoryTick(inventory,tick);
+        RefreshInventory(inventory);
+    }
+
+    void TheresaHeroSkin::ForgetInventory(void* inventory) noexcept
+    {
+        if (!inventory || inventoryContext.inventory.load()!=inventory) return;
+        Forget(inventoryContext.clone.load()); // Before native destroys clone/graphics.
+        inventoryContext.graphic.store(nullptr);
+        inventoryContext.coverage.store(~0u);
+        inventoryContext.clone.store(nullptr);
+        inventoryContext.owner.store(nullptr);
+        inventoryContext.inventory.store(nullptr);
+    }
+
+    void __fastcall TheresaHeroSkin::CloseInventory(void* inventory,void*)
+    {
+        ForgetInventory(inventory);
+        if (originalInventoryClose) originalInventoryClose(inventory);
+    }
+
+    void __fastcall TheresaHeroSkin::ReleaseInventory(void* inventory,void*)
+    {
+        ForgetInventory(inventory);
+        if (originalInventoryRelease) originalInventoryRelease(inventory);
+    }
+
+    void TheresaHeroSkin::RefreshInventory(void* inventory) noexcept
+    {
+        auto* hook=active_;
+        if (!hook || !inventory) return;
+        __try
+        {
+            void* owner=Field<void*>(inventory,4);
+            if (Field<std::uintptr_t>(inventory,0)!=reinterpret_cast<std::uintptr_t>(hook->module_)+0x02AFD7EC ||
+                !TheresaAppearanceHook::UsesTheresaPresentation(owner)) return;
+            void* clone=Field<void*>(inventory,0x1B8);
+            if (!Field<unsigned char>(inventory,0x60) || !clone) { ForgetInventory(inventory);return; }
+            auto** begin=Field<void**>(inventory,0x2CC);
+            auto** end=Field<void**>(inventory,0x2D0);
+            const auto first=reinterpret_cast<std::uintptr_t>(begin),last=reinterpret_cast<std::uintptr_t>(end);
+            if (!first || last<first || (last-first)%sizeof(void*) || (last-first)/sizeof(void*)>32) return;
+            if (inventoryContext.inventory.load()!=inventory || inventoryContext.clone.load()!=clone)
+            {
+                ForgetInventory(inventoryContext.inventory.load());
+                inventoryContext.inventory.store(inventory);inventoryContext.owner.store(owner);
+                inventoryContext.clone.store(clone);
+                char detail[192]={};
+                std::snprintf(detail,sizeof(detail),"inventory=%p owner=%p clone=%p handles=%u",inventory,owner,clone,
+                    static_cast<unsigned int>((last-first)/sizeof(void*)));
+                hook->diagnostics_.Event("MultiplayerTheresaInventoryCloneBound",detail);
+            }
+            bool childhood=false;
+            Entry* world=hook->FindGraphic(Field<void*>(owner,0xA4));
+            if (world) childhood=world->childhood.load();
+            for (auto** current=begin;current!=end;++current)
+            {
+                native::HeroMorphResolutionState resolved;
+                if (!*current || !native::HeroMorphComponent::InspectGraphicResolution(*current,resolved) ||
+                    resolved.referenceBoneCount!=91) continue;
+                if (inventoryContext.graphic.load()!=*current)
+                {
+                    Forget(clone);
+                    inventoryContext.graphic.store(*current);
+                    hook->diagnostics_.Event("MultiplayerTheresaInventoryGraphicBound",
+                        "actual clothing-menu graphics handle; own animation driver, no world component moved");
+                }
+                UpdateImpl(clone,childhood,*current);
+                break; // Other handles can be attached weapons/props, not Hero.
+            }
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER)
+        {
+            static unsigned int failures=0;
+            if (failures++<8) hook->diagnostics_.Event("MultiplayerTheresaInventoryRejected","unexpected native clothing clone/graphics layout");
+        }
+    }
+
+    void TheresaHeroSkin::BeforePreviewMesh(void* actor)
+    {
+        auto* hook=active_;
+        if (!hook) return;
+        {
+            std::lock_guard<std::recursive_mutex> lock(previewMutex);
+            for (auto& preview:previews)
+                if (preview.actor==actor)
+                {
+                    for (void* layer:preview.layers) if (layer) hook->originalHidden_(layer,1);
+                    // Keep the Hero driver hidden through asynchronous reload.
+                    // A completed non-Hero item is restored in AfterPreviewMesh.
+                }
+        }
+    }
+
+    void TheresaHeroSkin::AfterPreviewMesh(void* actor)
+    {
+        auto* hook=active_;
+        if (!hook) return;
+        static std::atomic_uint candidates{0};
+        if (candidates.fetch_add(1)<32)
+        {
+            char detail[256]={};DescribePreview(actor,reinterpret_cast<std::uintptr_t>(hook->module_),detail,sizeof(detail));
+            hook->diagnostics_.Event("MultiplayerTheresaEquipmentPreviewCandidate",detail);
+        }
+        for (auto& entry:hook->entries_)
+            if (TheresaAppearanceHook::IsLocalHeroDriverMesh(entry.master.load()) &&
+                IsHeroPreview(actor,entry.master.load(),reinterpret_cast<std::uintptr_t>(hook->module_)))
+            {
+                {
+                    std::lock_guard<std::recursive_mutex> lock(previewMutex);
+                    PreviewEntry* selected=nullptr;
+                    for (auto& preview:previews) if (preview.actor==actor) selected=&preview;
+                    if (!selected) for (auto& preview:previews) if (!preview.actor) { selected=&preview;break; }
+                    if (!selected) { hook->diagnostics_.Event("MultiplayerTheresaPreviewDeferred","rotating actor capacity reached");return; }
+                    selected->actor=actor;
+                }
+                hook->RefreshPreviews(entry);
+                return;
+            }
+        std::lock_guard<std::recursive_mutex> lock(previewMutex);
+        for (auto& preview:previews) if (preview.actor==actor)
+        {
+            void* main=PreviewMain(actor,reinterpret_cast<std::uintptr_t>(hook->module_));
+            void* asset=main?Field<void*>(main,0x1E4):nullptr;
+            if (!asset) continue; // Streaming has not completed.
+            for (int lod=0;lod<Field<int>(asset,0xE4) && lod<8;++lod)
+                for (int part=0;part<Field<int>(asset,0x5C) && part<64;++part) hook->originalSection_(main,part,1,lod);
+            hook->originalHidden_(main,0);
+        }
+    }
+
+    void __fastcall TheresaHeroSkin::SetPreviewMesh(void* actor,void*,void* name,int option)
+    {
+        if (!active_ || !originalPreviewSet) return;
+        BeforePreviewMesh(actor);originalPreviewSet(actor,name,option);AfterPreviewMesh(actor);
+    }
+
+    void __fastcall TheresaHeroSkin::SetGenericPreviewMesh(void* actor,void*,void* name,int skeletal,int option)
+    {
+        if (!active_ || !originalGenericPreviewSet) return;
+        BeforePreviewMesh(actor);originalGenericPreviewSet(actor,name,skeletal,option);AfterPreviewMesh(actor);
+    }
+
+    void __fastcall TheresaHeroSkin::DestroyPreview(void* actor,void*)
+    {
+        {
+            std::lock_guard<std::recursive_mutex> lock(previewMutex);
+            for (auto& preview:previews) if (preview.actor==actor) preview={};
+        }
+        if (originalPreviewDestroy) originalPreviewDestroy(actor);
+    }
+
+    void __fastcall TheresaHeroSkin::DestroyGenericPreview(void* actor,void*)
+    {
+        {
+            std::lock_guard<std::recursive_mutex> lock(previewMutex);
+            for (auto& preview:previews) if (preview.actor==actor) preview={};
+        }
+        if (originalGenericPreviewDestroy) originalGenericPreviewDestroy(actor);
+    }
+
+    void TheresaHeroSkin::RefreshPreviews(Entry& entry) noexcept
+    {
+        if (!TheresaAppearanceHook::IsLocalHeroDriverMesh(entry.master.load())) return;
+        std::lock_guard<std::recursive_mutex> lock(previewMutex);
+        for (auto& preview:previews) if (preview.actor) RefreshPreview(entry,&preview);
+    }
+
+    void TheresaHeroSkin::RefreshPreview(Entry& entry,void* value) noexcept
+    {
+        __try
+        {
+            auto& preview=*static_cast<PreviewEntry*>(value);
+            const auto base=reinterpret_cast<std::uintptr_t>(module_);
+            void* master=entry.master.load();
+            if (!IsHeroPreview(preview.actor,master,base)) return;
+            void* graphic=entry.graphic.load();
+            void* pawn=graphic?Field<void*>(graphic,8):nullptr;
+            if (!pawn || !ContainsSkin(pawn,entry.skin.load())) return;
+            auto** sources=Field<void**>(pawn,0x4F8);
+            const int count=Field<int>(pawn,0x4FC);
+            if (count<0 || count>128 || (count && !sources)) return;
+            using SetMesh=void(__thiscall*)(void*,void*,int);
+            using SetParent=void(__thiscall*)(void*,void*);
+            using Construct=void*(__cdecl*)(void*,void*,unsigned int,unsigned int,unsigned int,unsigned int,void*,void*,void*,void*);
+            using Attach=void(__thiscall*)(void*,void*);
+            using SetMaterial=void(__thiscall*)(void*,int,void*);
+            struct Name { unsigned int index=0,number=0; };
+            unsigned int used=0;
+            bool ready=false;
+            for (int i=0;i<count && used<preview.layers.size();++i)
+            {
+                void* source=sources[i];
+                if (!source || source==master || Field<void*>(source,0x4C)!=pawn ||
+                    (Field<unsigned int>(source,0x128)&4u)) continue;
+                void* asset=Field<void*>(source,0x1E4);
+                if (!asset || Field<int>(asset,0x5C)<1 || Field<int>(asset,0x5C)>64) continue;
+                // Copy render layers, not live components/transient buffers.
+                void*& layer=preview.layers[used];
+                const bool created=!layer;
+                if (!layer)
+                {
+                    Name name;
+                    char text[48]={};std::snprintf(text,sizeof(text),"TheresaUiLayer%u",used);
+                    reinterpret_cast<void*(__thiscall*)(Name*,const char*,int)>(base+ConstructPreviewNameRva)(&name,text,1);
+                    layer=reinterpret_cast<Construct>(base+ConstructComponentRva)(Field<void*>(source,0x34),preview.actor,
+                        name.index,name.number,0,0,nullptr,*reinterpret_cast<void**>(base+0x03094C58),nullptr,nullptr);
+                    if (!layer) continue;
+                }
+                if (Field<void*>(layer,0x1E4)!=asset)
+                    reinterpret_cast<SetMesh>(base+SetPreviewAssetRva)(layer,asset,1);
+                if (Field<void*>(layer,0x29C)!=master)
+                    reinterpret_cast<SetParent>(base+SetParentAnimationRva)(layer,master);
+                // Same master as the world follower preserves current native
+                // bone proportions. Each component keeps the UI actor transform.
+                const int mapCount=Field<int>(source,0x2A4);
+                if (mapCount<1 || mapCount>128 || Field<int>(layer,0x2A4)!=mapCount ||
+                    !Field<void*>(source,0x2A0) || !Field<void*>(layer,0x2A0))
+                { originalHidden_(layer,1);continue; }
+                std::memcpy(Field<void*>(layer,0x2A0),Field<void*>(source,0x2A0),mapCount*sizeof(int));
+                Field<unsigned int>(layer,0x3B0)|=0xA0u;
+                auto** authored=Field<void**>(asset,0x58);
+                auto** overrides=Field<void**>(source,0x1D8);
+                for (int part=0;part<Field<int>(asset,0x5C);++part)
+                {
+                    void* material=overrides && part<Field<int>(source,0x1DC) && overrides[part]?overrides[part]:authored?authored[part]:nullptr;
+                    auto** target=Field<void**>(layer,0x1D8);
+                    if (material && (!target || part>=Field<int>(layer,0x1DC) || target[part]!=material))
+                        reinterpret_cast<SetMaterial>(base+SetMaterialRva)(layer,part,material);
+                }
+                const int lodCount=Field<int>(asset,0xE4);
+                for (int lod=0;lod<lodCount && lod<8;++lod)
+                {
+                    auto* info=Field<std::uint8_t*>(source,0x3D4);
+                    if (!info || lod>=Field<int>(source,0x3D8)) continue;
+                    void* sourceLod=info+lod*0x18;
+                    const int materials=Field<int>(sourceLod,4);
+                    if (materials<1 || materials>64 || !Field<void*>(sourceLod,0)) continue;
+                    auto* targetInfo=Field<std::uint8_t*>(layer,0x3D4);
+                    if (!targetInfo || lod>=Field<int>(layer,0x3D8) || Field<int>(targetInfo+lod*0x18,4)!=materials)
+                    {
+                        originalSection_(layer,0,0,lod);
+                        targetInfo=Field<std::uint8_t*>(layer,0x3D4);
+                    }
+                    if (!targetInfo || lod>=Field<int>(layer,0x3D8)) continue;
+                    void* targetLod=targetInfo+lod*0x18;
+                    if (Field<int>(targetLod,4)!=materials || !Field<void*>(targetLod,0)) continue;
+                    if (!std::memcmp(Field<void*>(targetLod,0),Field<void*>(sourceLod,0),materials*sizeof(unsigned int))) continue;
+                    std::memcpy(Field<void*>(targetLod,0),Field<void*>(sourceLod,0),materials*sizeof(unsigned int));
+                    int first=0;
+                    void* assetLod=Field<std::uint8_t*>(asset,0x130)+lod*0x48;
+                    if (lod>0 && Field<int>(assetLod,0xC)>0 && Field<int*>(assetLod,8)) first=Field<int*>(assetLod,8)[0];
+                    if (first<0 || first>=materials) first=0;
+                    originalSection_(layer,0,Field<unsigned int*>(sourceLod,0)[first]?0:1,lod);
+                }
+                if (created) reinterpret_cast<Attach>(base+AttachComponentRva)(preview.actor,layer);
+                originalHidden_(layer,0);
+                if (source==entry.skin.load()) ready=true;
+                ++used;
+            }
+            for (std::size_t i=used;i<preview.layers.size();++i)
+                if (preview.layers[i]) originalHidden_(preview.layers[i],1);
+            if (ready)
+            {
+                void* main=PreviewMain(preview.actor,base);
+                originalHidden_(main,1);MaskWholeMesh(main,base);
+                static unsigned int reports=0;
+                if (reports++<8) diagnostics_.Event("MultiplayerTheresaEquipmentPreviewApplied",
+                    "local Sister/body/equipped layers mirrored on rotating actor; current pose/shape/material masks retained");
+            }
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER)
+        { diagnostics_.Event("MultiplayerTheresaEquipmentPreviewRejected","unexpected UI component layout; no world component moved"); }
     }
 
     void* __cdecl TheresaHeroSkin::LoadSkinObject(void* type, void* outer,
@@ -1062,7 +1665,31 @@ namespace fable::game::hero_pawn::appearance::hooks
             hook->originalAdd_(command);
         }
         __finally { requestedSkinAsset=previous; }
-        if (!entry || entry->graphic.load()!=graphic) return;
+        if (!entry || entry->graphic.load()!=graphic)
+        {
+            // Ordinary apparel is fully built here. Prepare only that mesh;
+            // preserve native publication and defer visibility to its normal
+            // reconciliation pass (never re-enter it from this builder).
+            __try
+            {
+                void* changedGraphic=command?Field<void*>(command,0):nullptr;
+                auto* changed=hook->FindGraphic(changedGraphic);
+                void* changedPawn=changedGraphic?Field<void*>(changedGraphic,8):nullptr;
+                const int changedSlot=command?Field<int>(command,4):-1;
+                if (changed && changedPawn && !changed->childhood.load() && changedSlot>=0 &&
+                    changedSlot<Field<int>(changedPawn,0x4FC) && changedSlot<128)
+                {
+                    void* mesh=Field<void**>(changedPawn,0x4F8)[changedSlot];
+                    if (mesh && Field<void*>(mesh,0x29C)==changed->master.load())
+                    {
+                        native::TheresaGarmentShape::Apply(mesh);
+                        garmentShapeDirty.fetch_or(1u<<static_cast<unsigned int>(changed-hook->entries_.data()));
+                    }
+                }
+            }
+            __except(EXCEPTION_EXECUTE_HANDLER) {}
+            return;
+        }
         bool installed=false;
         const char* stage="component-missing";
         int skinBones=0;
@@ -1115,9 +1742,11 @@ namespace fable::game::hero_pawn::appearance::hooks
                     entry->visualKey.store(0);
                     // Arm follower starts hidden until RefreshVisual has
                     // excluded its head/torso at every LOD.
-                    reinterpret_cast<Hide>(base+SetHiddenRva)(skin,armCommand || cutsceneHidden.load()?1:0);
+                    reinterpret_cast<Hide>(base+SetHiddenRva)(skin,armCommand || SceneHiddenFor(master)?1:0);
                     installed=true;
                     stage="attached";
+                    if (graphic==inventoryContext.graphic.load())
+                        reinterpret_cast<void(__stdcall*)(void*)>(base+InventoryLightingRva)(graphic);
                     if (!armCommand && !limbCommand)
                     {
                         void* nativeMesh=Field<void*>(pawn,0x460);

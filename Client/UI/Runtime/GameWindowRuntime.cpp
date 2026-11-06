@@ -3,6 +3,7 @@
 #include "Core/Bootstrap/ClientRuntimeServices.h"
 #include "Core/Bootstrap/FeatureRegistry.h"
 #include "Automation/FrontEnd/FrontEndAutomationScenario.h"
+#include "Game/HeroPawn/Appearance/Native/TheresaGarmentShape.h"
 
 namespace fable::ui::runtime
 {
@@ -66,6 +67,8 @@ using namespace fable::automation::transform_probe;
         WPARAM wParam,
         LPARAM lParam)
     {
+        if (fable::game::hero_pawn::appearance::native::TheresaGarmentShape::CaptureSizeKey(
+            message,static_cast<unsigned int>(wParam))) return true;
         return GameplayContext().runtime.HandleDeveloperToolsWindowMessage(
             window, message, wParam, lParam);
     }

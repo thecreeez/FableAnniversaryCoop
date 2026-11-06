@@ -626,6 +626,7 @@
     <ClInclude Include="Game\HeroPawn\Appearance\Hooks\TheresaAppearanceHook.h"><Filter>Game\HeroPawn\Appearance\Hooks</Filter></ClInclude>
     <ClInclude Include="Game\HeroPawn\Appearance\Hooks\TheresaHeroSkin.h"><Filter>Game\HeroPawn\Appearance\Hooks</Filter></ClInclude>
     <ClInclude Include="Game\HeroPawn\Appearance\Native\TheresaGarmentShape.h"><Filter>Game\HeroPawn\Appearance\Native</Filter></ClInclude>
+    <ClInclude Include="Game\HeroPawn\Appearance\TheresaVisibilityPolicy.h"><Filter>Game\HeroPawn\Appearance</Filter></ClInclude>
     <ClInclude Include="Game\HeroPawn\Equipment\Hooks\TheresaWeaponAttachmentHook.h"><Filter>Game\HeroPawn\Equipment\Hooks</Filter></ClInclude>
     <ClInclude Include="Game\HeroPawn\Appearance\RemoteHeroAppearanceController.h"><Filter>Game\HeroPawn\Appearance</Filter></ClInclude>
     <ClInclude Include="Game\HeroPawn\Combat\RemoteHeroCombatController.h"><Filter>Game\HeroPawn\Combat</Filter></ClInclude>

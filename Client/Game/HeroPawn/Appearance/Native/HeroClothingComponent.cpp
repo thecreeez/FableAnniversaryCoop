@@ -297,6 +297,50 @@ namespace fable::game::hero_pawn::appearance::native
         return true;
     }
 
+    bool HeroClothingComponent::CapturePreview(void* nativeThing, HeroClothingState& state) noexcept
+    {
+        state={};
+        void* inventory=FindComponent(nativeThing);
+        std::array<CategoryView, HeroClothingState::SlotCount> categories;
+        if (!ReadCategories(inventory,categories)) return false;
+        __try
+        {
+            auto* bytes=static_cast<std::uint8_t*>(inventory);
+            if (!bytes[0x60]) return false;
+            void* clone=*reinterpret_cast<void**>(bytes+0x1B8);
+            using namespace fable::game::entity::native;
+            auto* modifiers=static_cast<std::uint8_t*>(ThingComponentAccess::Find(
+                clone,ThingComponentType::HeroAttachableAppearanceModifiers));
+            auto* module=reinterpret_cast<std::uint8_t*>(GetModuleHandleW(nullptr));
+            if (!modifiers || !module || *reinterpret_cast<void**>(modifiers)!=module+0x02AF7E34) return false;
+            auto* first=*reinterpret_cast<std::uint8_t**>(modifiers+0x3C);
+            auto* last=*reinterpret_cast<std::uint8_t**>(modifiers+0x40);
+            if (!first || reinterpret_cast<std::uintptr_t>(last)!=reinterpret_cast<std::uintptr_t>(first)+0x30 ||
+                !IsReadableRange(first,0x30)) return false;
+            // 019B2310 recomputes the low enabled byte, with higher-category
+            // modifiers suppressing lower ones. Do not inspect disabled IDs.
+            for (int category=0;category<3;++category)
+            {
+                auto* begin=*reinterpret_cast<std::uint8_t**>(first+category*0x10);
+                auto* end=*reinterpret_cast<std::uint8_t**>(first+category*0x10+4);
+                const auto lo=reinterpret_cast<std::uintptr_t>(begin),hi=reinterpret_cast<std::uintptr_t>(end);
+                if (hi<lo || (hi-lo)%8 || (hi-lo)/8>128 || (hi>lo && !IsReadableRange(begin,hi-lo))) return false;
+                for (auto* entry=begin;entry!=end;entry+=8)
+                {
+                    if (!entry[4]) continue;
+                    const auto id=*reinterpret_cast<const std::int32_t*>(entry);
+                    for (std::size_t slot=0;slot<categories.size();++slot)
+                        for (std::size_t item=0;item<categories[slot].entryCount;++item)
+                            if (*reinterpret_cast<const std::int32_t*>(categories[slot].entries+item*kEntryStride)==id)
+                                state.definitionIndices[slot]=id;
+                }
+            }
+            state.valid=true;
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { state={};return false; }
+        return state.IsSane();
+    }
+
     bool HeroClothingComponent::RefreshEquipped(void* nativeThing) noexcept
     {
         void* component=FindComponent(nativeThing);

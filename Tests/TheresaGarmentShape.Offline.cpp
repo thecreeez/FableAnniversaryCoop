@@ -1,6 +1,7 @@
 // Offline geometry verifier: includes the production deformation so no game,
 // injection, native object construction or engine helper is ever executed.
 #include "../Client/Game/HeroPawn/Appearance/Native/TheresaGarmentShape.cpp"
+#include "../Client/Game/HeroPawn/Appearance/TheresaVisibilityPolicy.h"
 
 namespace
 {
@@ -193,6 +194,180 @@ namespace
 
 int main()
 {
+    using fable::game::hero_pawn::appearance::native::TheresaGarmentShape;
+    using namespace fable::game::hero_pawn::appearance;
+    if (!TheresaHeroFacialMesh("MESH_HERO_BEARD_SHORT_01") ||
+        !TheresaHeroFacialMesh("MESH_HERO_HAIR_PONYTAIL_01") ||
+        TheresaHeroFacialMesh("MESH_HERO_BANDITCAMP_HEAD_01") ||
+        TheresaHeroFacialMesh("MESH_SISTER_01") || TheresaHeroFacialMesh(nullptr)) return 25;
+    if (!TheresaOpenTorsoGarment("MESH_HERO_DRESS_DARK_01") ||
+        !TheresaOpenTorsoGarment("MESH_HERO_LADY_GREY_SHIRT_01") ||
+        TheresaOpenTorsoGarment("MESH_HERO_PLATEARMOUR_SHIRT_01") || TheresaOpenTorsoGarment(nullptr) ||
+        !TheresaBodyMaterialVisible(0,65) || !TheresaBodyMaterialVisible(2,65) ||
+        !TheresaBodyMaterialVisible(7,65) || TheresaBodyMaterialVisible(16,65) ||
+        TheresaBodyMaterialVisible(0,1)) return 26;
+    if (TheresaCoverageForMesh("MESH_HERO_BANDITCAMP_SHIRT_01")!=1 ||
+        TheresaCoverageForMesh("MESH_HERO_BANDITCAMP_TROUSERS_01")!=2 ||
+        TheresaCoverageForMesh("MESH_HERO_BANDITCAMP_GLOVE_L_01")!=4 ||
+        TheresaCoverageForMesh("MESH_HERO_BANDITCAMP_BOOT_R_01")!=8 ||
+        TheresaCoverageForMesh("MESH_HERO_BANDITCAMP_HEAD_01")!=16 ||
+        TheresaCoverageForMesh("MESH_SISTER_01")!=0 || TheresaCoverageForMesh(nullptr)!=0) return 24;
+    const std::array<int,6> empty={100,101,102,103,104,105};
+    HeroClothingState clothes;clothes.valid=true;clothes.definitionIndices=empty;
+    if (TheresaOutfitCoverage(clothes,empty)!=0) return 22;
+    for (int material=0;material<18;++material)
+        if (TheresaBodyMaterialVisible(material,0)) return 22;
+    clothes.definitionIndices[1]=200;
+    const auto shirt=TheresaOutfitCoverage(clothes,empty);
+    if (shirt!=1 || TheresaBodyMaterialVisible(0,shirt) || TheresaBodyMaterialVisible(3,shirt) ||
+        !TheresaBodyMaterialVisible(8,shirt)) return 22;
+    clothes.definitionIndices=empty;clothes.definitionIndices[2]=201;clothes.definitionIndices[4]=202;
+    const auto extremities=TheresaOutfitCoverage(clothes,empty);
+    if (extremities!=12 || TheresaBodyMaterialVisible(9,extremities) ||
+        TheresaBodyMaterialVisible(15,extremities) || TheresaBodyMaterialVisible(0,extremities)) return 22;
+    if (!TheresaBodyMaterialVisible(0,33) || !TheresaBodyMaterialVisible(7,33) ||
+        !TheresaBodyMaterialVisible(8,33) || TheresaBodyMaterialVisible(2,33) ||
+        TheresaBodyMaterialVisible(16,33)) return 22;
+    clothes.definitionIndices=empty;clothes.definitionIndices[5]=203;
+    if (TheresaOutfitCoverage(clothes,empty)!=15) return 22;
+    clothes.definitionIndices=empty;clothes.definitionIndices[0]=204;
+    if (TheresaOutfitCoverage(clothes,empty)!=16) return 22;
+    clothes.definitionIndices[0]=empty[0];
+    if (TheresaOutfitCoverage(clothes,empty)!=0 || TheresaHiddenForScene(true,true) ||
+        !TheresaHiddenForScene(true,false) || TheresaHiddenForScene(false,false)) return 22;
+    std::puts("Visibility PASS: empty slots use Sister outfit, no naked Hero torso/legs, bandit chest/arms covered, gloves/boots masked, local chest animation visible, remote cutscene hide preserved.");
+    KeyRepeat repeat;
+    if (HeldSizeStep(repeat,1,100)!=1 || HeldSizeStep(repeat,1,449)!=0 ||
+        HeldSizeStep(repeat,1,450)!=1 || HeldSizeStep(repeat,1,450)!=0 ||
+        HeldSizeStep(repeat,1,549)!=0 || HeldSizeStep(repeat,1,550)!=1 ||
+        HeldSizeStep(repeat,-1,551)!=-1 || HeldSizeStep(repeat,-1,900)!=0 ||
+        HeldSizeStep(repeat,-1,901)!=-1 || HeldSizeStep(repeat,0,902)!=0 ||
+        HeldSizeStep(repeat,1,903)!=1 || HeldSizeStep(repeat,1,5000)!=1 ||
+        HeldSizeStep(repeat,1,5000)!=0) return 15;
+    std::puts("Hotkey repeat PASS: immediate step, initial delay, repeat interval, reverse, release/cancel, no catch-up burst.");
+    // Full hold to either limit, reversal, and independent repeat state.
+    float amount=0;
+    for (int i=0;i<100;++i) amount=SteppedSize(amount,1,0,1.5f);
+    if (amount!=1.5f || SteppedSize(amount,-1,0,1.5f)>=amount) return 16;
+    for (int i=0;i<100;++i) amount=SteppedSize(amount,-1,0,1.5f);
+    if (amount!=0 || SteppedSize(amount,1,0,1.5f)!=0.05f) return 16;
+    KeyRepeat independent;
+    if (HeldSizeStep(independent,-1,5000)!=-1 || HeldSizeStep(repeat,1,5000)!=0) return 16;
+    liveHips.store(0);liveButtocks.store(0);
+    auto lower=TheresaGarmentShape::LowerBodyScales();
+    if (lower.pelvisWidth!=1 || lower.pelvisDepth!=1 || lower.hipSpacing!=1 ||
+        lower.thighWidth!=1 || lower.thighDepth!=1) return 17;
+    liveHips.store(1.5f);
+    lower=TheresaGarmentShape::LowerBodyScales();
+    if (lower.pelvisWidth<=1 || lower.hipSpacing<=1 || lower.thighWidth<=1 ||
+        lower.pelvisDepth!=1 || lower.thighDepth!=1) return 17;
+    liveHips.store(0);liveButtocks.store(1.5f);
+    lower=TheresaGarmentShape::LowerBodyScales();
+    if (lower.pelvisDepth<=1 || lower.thighDepth<=1 || lower.pelvisWidth!=1 ||
+        lower.hipSpacing!=1 || lower.thighWidth!=1) return 17;
+    liveHips.store(0);liveButtocks.store(0);
+    lower=TheresaGarmentShape::LowerBodyScales();
+    if (lower.pelvisDepth!=1 || lower.thighDepth!=1) return 17;
+    sizeKeysEnabled.store(true);
+    if (!TheresaGarmentShape::CaptureSizeKey(WM_KEYDOWN,VK_F3) ||
+        !TheresaGarmentShape::CaptureSizeKey(WM_KEYUP,VK_F7) ||
+        TheresaGarmentShape::CaptureSizeKey(WM_KEYDOWN,VK_F5) ||
+        TheresaGarmentShape::CaptureSizeKey(WM_MOUSEMOVE,VK_F3)) return 18;
+    sizeKeysEnabled.store(false);
+    if (TheresaGarmentShape::CaptureSizeKey(WM_KEYDOWN,VK_F3)) return 18;
+    std::puts("Lower body PASS: neutral zero, bounded reversible steps, independent controls/axes, reserved keys exclude F5.");
+    liveShoulderNarrowing.store(0);
+    const float originalShoulder=TheresaGarmentShape::ShoulderScales().clavicleLength;
+    if (std::fabs(originalShoulder-0.86f)>0.00001f) return 19;
+    float previousShoulder=originalShoulder;
+    for (int i=1;i<=30;++i)
+    {
+        liveShoulderNarrowing.store(i*0.05f);
+        const auto shoulder=TheresaGarmentShape::ShoulderScales();
+        if (shoulder.clavicleLength>=previousShoulder || shoulder.clavicleLength<0.6799f ||
+            shoulder.upperArmScale!=1) return 19;
+        // Actual Hero rest offsets: shoulder joint at clavicle X=12.68056,
+        // elbow at upper-arm X=35.45965. Native parent-scale semantics must
+        // reduce the first offset without increasing the arm segment.
+        if (12.680562f*shoulder.clavicleLength>=12.680562f*previousShoulder ||
+            35.459656f*shoulder.upperArmScale!=35.459656f) return 19;
+        previousShoulder=shoulder.clavicleLength;
+    }
+    liveShoulderNarrowing.store(100);
+    if (std::fabs(TheresaGarmentShape::ShoulderScales().clavicleLength-previousShoulder)>0.00001f) return 19;
+    liveShoulderNarrowing.store(-1);
+    if (TheresaGarmentShape::ShoulderScales().clavicleLength!=originalShoulder) return 19;
+    // Snapshot is a single recoverable record, including untouched settings.
+    static std::string profileRecord;
+    diagnostics.event=[](const char* state,const char* detail)
+    { if (!std::strcmp(state,"MultiplayerTheresaBodyProfile")) profileRecord=detail; };
+    liveBoneDepth.store(1.4f);liveHips.store(0.7f);liveButtocks.store(0.85f);liveShoulderNarrowing.store(0.6f);
+    LogBodyProfile("bookmark_F11");
+    liveWaistNarrowing.store(0.5f);liveTorsoNarrowing.store(0.5f);LogBodyProfile("bookmark_F11");
+    for (const char* field:{"version=4","reason=bookmark_F11","chest_depth_requested=1.40",
+        "hips=0.70","buttocks=0.85","shoulder_narrowing=0.60","clavicle_length_scale=0.788",
+        "upper_arm_scale=1.000", "pelvis_width=", "pelvis_depth=", "hip_spacing=", "waist_narrowing=0.50", "waist_cross_scale=0.900", "torso_narrowing=0.50", "torso_cross_scale=0.910", "hotkeys_enabled=0"})
+        if (profileRecord.find(field)==std::string::npos) return 20;
+    diagnostics.event=nullptr;
+    liveBoneDepth.store(1.35f);liveHips.store(0);liveButtocks.store(0);liveShoulderNarrowing.store(0);
+    sizeKeysEnabled.store(true);
+    if (!TheresaGarmentShape::CaptureSizeKey(WM_KEYDOWN,VK_F9) ||
+        !TheresaGarmentShape::CaptureSizeKey(WM_SYSKEYUP,VK_F10) ||
+        !TheresaGarmentShape::CaptureSizeKey(WM_KEYUP,VK_F11) ||
+        !TheresaGarmentShape::CaptureSizeKey(WM_KEYDOWN,VK_OEM_4) ||
+        !TheresaGarmentShape::CaptureSizeKey(WM_KEYUP,VK_OEM_6)) return 21;
+    sizeKeysEnabled.store(false);
+    const auto untouchedHips=TheresaGarmentShape::LowerBodyScales().pelvisWidth;
+    const auto untouchedShoulder=TheresaGarmentShape::ShoulderScales().clavicleLength;
+    float previousWaist=1.01f;
+    for (int step=0;step<=30;++step)
+    {
+        liveWaistNarrowing.store(step*0.05f);
+        const float scale=TheresaGarmentShape::WaistScale();
+        if (scale>=previousWaist || scale<0.6999f || scale>1.0001f ||
+            TheresaGarmentShape::LowerBodyScales().pelvisWidth!=untouchedHips ||
+            TheresaGarmentShape::ShoulderScales().clavicleLength!=untouchedShoulder) return 27;
+        previousWaist=scale;
+    }
+    liveWaistNarrowing.store(9);
+    if (std::fabs(TheresaGarmentShape::WaistScale()-0.7f)>0.0001f) return 27;
+    liveWaistNarrowing.store(-1);
+    if (TheresaGarmentShape::WaistScale()!=1) return 27;
+    liveWaistNarrowing.store(0);
+    previousWaist=1.01f;
+    for (int step=0;step<=30;++step)
+    {
+        liveTorsoNarrowing.store(step*0.05f);
+        const float scale=TheresaGarmentShape::TorsoScale();
+        if (scale>=previousWaist || scale<0.7299f || scale>1.0001f ||
+            TheresaGarmentShape::WaistScale()!=1 ||
+            TheresaGarmentShape::LowerBodyScales().pelvisWidth!=untouchedHips ||
+            TheresaGarmentShape::ShoulderScales().clavicleLength!=untouchedShoulder) return 28;
+        previousWaist=scale;
+    }
+    liveTorsoNarrowing.store(9);
+    if (std::fabs(TheresaGarmentShape::TorsoScale()-0.73f)>0.0001f) return 28;
+    liveTorsoNarrowing.store(-1);
+    if (TheresaGarmentShape::TorsoScale()!=1) return 28;
+    liveTorsoNarrowing.store(0);
+    std::puts("Torso/waist/profile PASS: bounded independent narrowing, neutral zero, complete v4 bookmark, bracket key reservations.");
+    wchar_t temporary[MAX_PATH]={};
+    if (!GetTempPathW(MAX_PATH,temporary)) return 23;
+    const std::wstring ini=std::wstring(temporary)+L"theresa-shape-"+std::to_wstring(GetCurrentProcessId())+L".ini";
+    { std::ofstream output(ini);output<<"[Chest]\nBoneDepthScale=1.70\n[Body]\nHips=0.30\nButtocks=0.35\nShoulderNarrowing=0.20\nWaistNarrowing=0.40\nTorsoNarrowing=0.60\n[Controls]\nEnableShapeHotkeys=0\n"; }
+    LoadShapeSettings(ini);
+    if (liveBoneDepth.load()!=1.70f || liveHips.load()!=0.30f || liveButtocks.load()!=0.35f ||
+        liveShoulderNarrowing.load()!=0.20f || liveWaistNarrowing.load()!=0.40f || liveTorsoNarrowing.load()!=0.60f || shapeHotkeys) return 23;
+    DeleteFileW(ini.c_str());
+    LoadShapeSettings(ini); // Missing file uses the owner's bookmark as defaults.
+    if (liveBoneDepth.load()!=1.50f || liveHips.load()!=0.45f || liveButtocks.load()!=0.35f ||
+        liveShoulderNarrowing.load()!=0.60f || liveWaistNarrowing.load()!=0.25f || liveTorsoNarrowing.load()!=1.35f || shapeHotkeys) return 23;
+    moduleBase=1; // Disabled path must stop before any foreground/key polling.
+    if (TheresaGarmentShape::TickSizeHotkeys() || sizeKeysEnabled.load() ||
+        TheresaGarmentShape::CaptureSizeKey(WM_KEYDOWN,VK_F1) ||
+        TheresaGarmentShape::CaptureSizeKey(WM_KEYDOWN,VK_F11)) return 23;
+    moduleBase=0;profileLogged=false;
+    std::puts("INI PASS: owner F11 profile restored; shape keys neither change values nor reserve game keys when disabled.");
     if (!VerifyMaterialGate()) return 9;
     if (!VerifyOutfitRetirement()) return 10;
     if (!VerifyArchiveScope()) return 11;

@@ -26,6 +26,12 @@ namespace fable::game::hero_pawn::appearance::hooks
         static bool InspectForTest(void* thing, bool hidden) noexcept;
 
     private:
+        static void UpdateImpl(void* thing,bool childhood,void* graphicOverride) noexcept;
+        static void __fastcall TickInventory(void* inventory,void*,unsigned int tick);
+        static void __fastcall CloseInventory(void* inventory,void*);
+        static void __fastcall ReleaseInventory(void* inventory,void*);
+        static void RefreshInventory(void* inventory) noexcept;
+        static void ForgetInventory(void* inventory) noexcept;
         struct Entry final
         {
             std::atomic<void*> thing{nullptr};
@@ -62,6 +68,14 @@ namespace fable::game::hero_pawn::appearance::hooks
             std::size_t size, void* callback, char replace);
         static void* __cdecl ResolveSkinPawn(void* pawn);
         static void __cdecl RefreshVisual(void* command);
+        static void __fastcall SetPreviewMesh(void* actor,void*,void* meshName,int option);
+        static void __fastcall DestroyPreview(void* actor,void*);
+        static void __fastcall SetGenericPreviewMesh(void* actor,void*,void* meshName,int skeletal,int option);
+        static void __fastcall DestroyGenericPreview(void* actor,void*);
+        static void BeforePreviewMesh(void* actor);
+        static void AfterPreviewMesh(void* actor);
+        void RefreshPreviews(Entry& entry) noexcept;
+        void RefreshPreview(Entry& entry,void* preview) noexcept;
         static void __fastcall GuardHidden(void* mesh,void*,unsigned int hidden);
         static void __fastcall GuardSection(void* mesh,void*,int section,int show,int lod);
         bool IsDriver(void* mesh) noexcept;
