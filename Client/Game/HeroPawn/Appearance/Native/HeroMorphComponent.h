@@ -7,6 +7,13 @@
 
 namespace fable::game::hero_pawn::appearance::native
 {
+    struct TheresaVisualShapeState final
+    {
+        void* controller = nullptr;
+        std::array<HeroBoneScale, 91> baseline = {};
+        std::array<HeroBoneScale, 91> lastApplied = {};
+        std::array<bool, 91> applied = {};
+    };
     struct HeroMorphResolutionState final
     {
         void* thing = nullptr;
@@ -34,6 +41,9 @@ namespace fable::game::hero_pawn::appearance::native
     class HeroMorphComponent final
     {
     public:
+        // Modest render-only proportions; does not edit Hero stats/morph inputs.
+        static bool ApplyTheresaShape(void* nativeThing,
+            TheresaVisualShapeState& state, bool restore = false) noexcept;
         [[nodiscard]] static bool SetUpdateRequested(
             void* nativeThing,
             bool requested) noexcept;

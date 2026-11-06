@@ -32,11 +32,26 @@ namespace fable::launcher::application
         spec.showConsole = plan.options.showConsole;
         spec.generateLogs = plan.options.generateLogs;
         spec.arguments = BuildGameArguments(plan);
+        const bool theresaPreview=plan.options.automationScenario==L"theresa_preview";
+        if (theresaPreview) spec.fixtureSaveName=plan.options.hostFixtureSave;
 
         runtime::LaunchedGame launched;
         if (!runtime::SpawnGame(spec, launched))
         {
             return 1;
+        }
+        if (theresaPreview)
+        {
+            if (!automation::WaitForLocalInstanceReady(launched,plan.eventPath,L"Theresa preview",0,
+                    plan.options.automationTimeoutSeconds,true))
+            {
+                runtime::CloseCreatedProcess(launched.process.get(),launched.processId,launched.shutdownEvent.get());
+                return 1;
+            }
+            std::wcout << L"Theresa manual preview started: one local Hero, no multiplayer session.\n"
+                       << L"The isolated save will load automatically. The game stays open for manual clothing inspection.\n"
+                       << L"Game PID: " << launched.processId << L"\n";
+            return 0;
         }
         if (!plan.options.automationScenario.empty())
         {

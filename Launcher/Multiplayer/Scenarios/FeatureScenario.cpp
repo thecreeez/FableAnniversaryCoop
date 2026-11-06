@@ -17,10 +17,17 @@ namespace fable::launcher::multiplayer
         {
             const bool checkpoint = std::wstring(theresaMode) == L"checkpoint";
             const char* finalEvent = checkpoint ? "TheresaCheckpointRestoredVerified" : "TheresaOutfitRestoredVerified";
-            bool okay = checkpoint || (peers.WaitEvent(host,"TheresaOutfitChangedVerified") &&
+            bool okay = checkpoint || (peers.WaitEvent(host,"TheresaProgressionDampingVerified") &&
+                peers.WaitEvent(guest,"TheresaProgressionDampingVerified") &&
+                peers.WaitEvent(host,"TheresaOutfitChangedVerified") &&
                 peers.WaitEvent(guest,"TheresaOutfitChangedVerified"));
             okay = okay && peers.WaitEvent(host,finalEvent) && peers.WaitEvent(guest,finalEvent) &&
                 peers.IsResponsive(host) && peers.IsResponsive(guest);
+            if (!checkpoint)
+            {
+                automation::CaptureGameWindow(host.game.processId,host.root/L"theresa-outfit.bmp");
+                automation::CaptureGameWindow(guest.game.processId,guest.root/L"theresa-outfit.bmp");
+            }
             const bool stopped = session.Shutdown();
             std::wcout << L"Multiplayer Theresa acceptance " << (okay && stopped ? L"passed" : L"failed")
                 << L": " << theresaMode << L".\nState root: " << session.context().sessionRoot.wstring() << L"\n";

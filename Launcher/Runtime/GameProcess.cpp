@@ -366,6 +366,18 @@ class ChildEnvironment final
 
 bool SpawnGame(const GameLaunchSpec &spec, LaunchedGame &launched)
 {
+    wchar_t desktopName[128]={};
+    DWORD desktopBytes=0;
+    constexpr wchar_t isolatedDesktopPrefix[]=L"CodexSandboxDesktop-";
+    if (GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()),UOI_NAME,
+            desktopName,sizeof(desktopName),&desktopBytes) &&
+        std::wcsncmp(desktopName,isolatedDesktopPrefix,std::size(isolatedDesktopPrefix)-1)==0)
+    {
+        std::wcerr << L"Automation environment blocked: Fable DX9 cannot initialize on the isolated agent desktop "
+                   << desktopName << L". Run qa\\run-suite-parallel.ps1 from a normal interactive PowerShell.\n";
+        launched={};
+        return false;
+    }
     const fs::path &executable = spec.executable;
     const fs::path &clientDll = spec.clientDll;
     const fs::path &clientLog = spec.clientLog;

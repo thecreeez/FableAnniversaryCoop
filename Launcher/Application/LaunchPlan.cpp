@@ -60,6 +60,7 @@ namespace fable::launcher::application
         bool IsFixtureMode(const Options& options)
         {
             return options.automationScenario == L"load_fixture" ||
+                options.automationScenario == L"theresa_preview" ||
                 options.automationScenario == L"appearance_cycle" ||
                 IsMultiplayer(options);
         }
@@ -190,7 +191,9 @@ namespace fable::launcher::application
                 launcherDirectory / fable::launcher::kClientDllName)
             : fable::launcher::AbsolutePath(options.clientDll);
         plan.runId = fable::launcher::CreateRunId();
-        const bool local = IsLocalInstance(options);
+        const bool preview = options.automationScenario == L"theresa_preview";
+        if (preview) plan.options.localInstance=L"theresa";
+        const bool local = IsLocalInstance(options) || preview;
         plan.localSession = local
             ? options.localSession.empty() ? plan.runId : options.localSession
             : std::wstring();
@@ -198,7 +201,7 @@ namespace fable::launcher::application
         plan.artifactRoot = fable::launcher::AbsolutePath(
             plan.clientDll.parent_path() / L"artifacts" / artifactId);
         plan.instanceRoot = local
-            ? plan.artifactRoot / options.localInstance
+            ? plan.artifactRoot / plan.options.localInstance
             : plan.artifactRoot;
         plan.eventPath = plan.instanceRoot / L"events.jsonl";
         plan.clientLog = plan.instanceRoot / L"client.log";
@@ -220,7 +223,7 @@ namespace fable::launcher::application
                 plan.runId / L"Documents"
             : plan.clientDll.parent_path() / L"fixtures" / L"automation" /
                 L"Documents";
-        plan.fixtureDocuments = local
+        plan.fixtureDocuments = preview ? plan.instanceRoot / L"Documents" : local
             ? options.fixtureDocuments.empty()
                 ? std::filesystem::path()
                 : fable::launcher::AbsolutePath(options.fixtureDocuments)

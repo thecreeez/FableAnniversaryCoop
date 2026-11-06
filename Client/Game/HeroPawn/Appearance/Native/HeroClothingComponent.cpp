@@ -31,6 +31,9 @@ namespace
     constexpr std::uintptr_t kExpectedVtableRva = 0x02AFD7EC;
     constexpr std::uintptr_t kWearOwnedDefinitionRva = 0x019F11D7;
     constexpr std::uintptr_t kRebuildAppearanceRva = 0x019F6A45;
+    constexpr std::uintptr_t kRefreshModifiersRva = 0x019B4A10;
+    constexpr std::array<std::uint8_t, 8> kRefreshModifiersSignature = {
+        0x56,0x8B,0xF1,0x8A,0x46,0x18,0xA8,0x01};
 
     constexpr std::array<std::uint8_t, 3> kWearSignature = {
         0x6A, 0x08, 0xB8};
@@ -269,6 +272,57 @@ namespace fable::game::hero_pawn::appearance::native
         HeroClothingState& state) noexcept
     {
         return CaptureComponent(FindComponent(nativeThing), state);
+    }
+
+    bool HeroClothingComponent::CaptureCatalog(
+        void* nativeThing, HeroClothingCatalog& catalog) noexcept
+    {
+        catalog={};
+        std::array<CategoryView, HeroClothingState::SlotCount> categories;
+        if (!ReadCategories(FindComponent(nativeThing),categories)) return false;
+        __try
+        {
+            for (const auto& category:categories)
+                for (std::size_t i=0;i<category.entryCount;++i)
+                {
+                    const auto* entry=category.entries+i*kEntryStride;
+                    const auto definition=*reinterpret_cast<const std::int32_t*>(entry+kEntryDefinitionIndexOffset);
+                    const auto count=*reinterpret_cast<const std::int32_t*>(entry+kEntryCountOffset);
+                    if (definition<=0 || definition>=1'000'000 || count<=0) continue;
+                    if (catalog.count>=catalog.definitions.size()) return false;
+                    catalog.definitions[catalog.count++]=definition;
+                }
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { catalog={}; return false; }
+        return true;
+    }
+
+    bool HeroClothingComponent::RefreshEquipped(void* nativeThing) noexcept
+    {
+        void* component=FindComponent(nativeThing);
+        HeroClothingState before;
+        if (!CaptureComponent(component,before)) return false;
+        auto* module=reinterpret_cast<std::uint8_t*>(GetModuleHandleW(nullptr));
+        auto* rebuild=module?module+kRebuildAppearanceRva:nullptr;
+        auto* refresh=module?module+kRefreshModifiersRva:nullptr;
+        void* modifiers=fable::game::entity::native::ThingComponentAccess::Find(nativeThing,
+            fable::game::entity::native::ThingComponentType::HeroAttachableAppearanceModifiers);
+        if (!modifiers || !HasSignatureOrDetour(rebuild,kRebuildSignature) ||
+            !HasSignatureOrDetour(refresh,kRefreshModifiersSignature)) return false;
+        // 019F6A45 clears appearance category2, republishes its existing
+        // equipped modifier list (+19C) and marks appearance dirty through
+        // 019B36A0. The wear/selection mutation is a separate native path.
+        using Rebuild=void(__thiscall*)(void*,void*);
+        using Refresh=void(__thiscall*)(void*);
+        __try
+        {
+            if (*static_cast<void**>(modifiers)!=module+0x02AF7E34) return false;
+            reinterpret_cast<Rebuild>(rebuild)(component,nativeThing);
+            reinterpret_cast<Refresh>(refresh)(modifiers);
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+        HeroClothingState after;
+        return CaptureComponent(component,after) && after.Equals(before);
     }
 
     bool HeroClothingComponent::Apply(

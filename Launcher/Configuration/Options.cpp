@@ -439,6 +439,7 @@ namespace
             options.automationScenario != L"observe_save_list" &&
             options.automationScenario != L"bootstrap_fixture_probe" &&
             options.automationScenario != L"load_fixture" &&
+            options.automationScenario != L"theresa_preview" &&
             options.automationScenario != L"appearance_cycle")
         {
             error = L"Unknown automation scenario: " + options.automationScenario;
@@ -641,7 +642,7 @@ void PrintUsage()
         << L"  --host-save <name>  Exact host fixture save entry (default: AutoSave)\n"
         << L"  --guest-save <name>  Exact guest fixture save entry (default: AutoSave)\n"
         << L"  --character-snapshot <json>  Optional server-character state to apply after fixture load\n"
-        << L"  --automation <id>  Run observe_frontend, observe_save_list, bootstrap_fixture_probe, load_fixture, or appearance_cycle\n"
+        << L"  --automation <id>  Run observe_frontend, observe_save_list, bootstrap_fixture_probe, load_fixture, appearance_cycle, or theresa_preview (manual, one client)\n"
         << L"  --timeout <sec>     Automation timeout from 10 to 600 seconds (default: 120)\n"
         << L"  --local-instance <id>  Start one isolated compact local development instance\n"
         << L"  --local-session <id>  Reuse a local development session identifier\n"

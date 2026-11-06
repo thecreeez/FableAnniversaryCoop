@@ -10,6 +10,7 @@
 namespace fable::launcher::automation
 {
     HWND FindMainWindow(DWORD processId);
+    bool CaptureGameWindow(DWORD processId, const std::filesystem::path& path);
 
     bool PositionLocalWindow(
         HWND window,

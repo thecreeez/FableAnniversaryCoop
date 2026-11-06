@@ -11,9 +11,53 @@
 #include <cwchar>
 #include <iostream>
 #include <iterator>
+#include <fstream>
 
 namespace fable::launcher::automation
 {
+    bool CaptureGameWindow(DWORD processId, const std::filesystem::path& path)
+    {
+        const HWND window=FindMainWindow(processId);
+        DWORD owner=0;
+        if (!window || !GetWindowThreadProcessId(window,&owner) || owner!=processId) return false;
+        RECT bounds={};
+        if (!GetWindowRect(window,&bounds)) return false;
+        const int width=bounds.right-bounds.left, height=bounds.bottom-bounds.top;
+        if (width<=0 || height<=0 || width>8192 || height>8192) return false;
+        HDC source=GetDC(window);
+        if (!source) return false;
+        HDC target=CreateCompatibleDC(source);
+        BITMAPINFO info={};
+        info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth=width; info.bmiHeader.biHeight=-height;
+        info.bmiHeader.biPlanes=1; info.bmiHeader.biBitCount=32;
+        info.bmiHeader.biCompression=BI_RGB;
+        void* pixels=nullptr;
+        HBITMAP bitmap=CreateDIBSection(source,&info,DIB_RGB_COLORS,&pixels,nullptr,0);
+        bool saved=false;
+        if (target && bitmap && pixels)
+        {
+            HGDIOBJ previous=SelectObject(target,bitmap);
+            if (PrintWindow(window,target,2))
+            {
+                BITMAPFILEHEADER header={};
+                const DWORD bytes=static_cast<DWORD>(width)*static_cast<DWORD>(height)*4;
+                header.bfType=0x4D42;
+                header.bfOffBits=sizeof(header)+sizeof(BITMAPINFOHEADER);
+                header.bfSize=header.bfOffBits+bytes;
+                std::ofstream output(path,std::ios::binary);
+                output.write(reinterpret_cast<const char*>(&header),sizeof(header));
+                output.write(reinterpret_cast<const char*>(&info.bmiHeader),sizeof(BITMAPINFOHEADER));
+                output.write(static_cast<const char*>(pixels),bytes);
+                saved=output.good();
+            }
+            SelectObject(target,previous);
+        }
+        if (bitmap) DeleteObject(bitmap);
+        if (target) DeleteDC(target);
+        ReleaseDC(window,source);
+        return saved;
+    }
     namespace
     {
         struct ProcessWindowSearch

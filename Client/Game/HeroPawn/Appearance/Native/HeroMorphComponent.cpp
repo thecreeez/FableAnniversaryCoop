@@ -1,4 +1,5 @@
 #include "HeroMorphComponent.h"
+#include "TheresaGarmentShape.h"
 
 #include "Game/Entity/Native/ThingComponentAccess.h"
 
@@ -689,6 +690,107 @@ namespace fable::game::hero_pawn::appearance::native
             component[kUpdateRequestedOffset] = 0;
             return false;
         }
+    }
+
+    bool HeroMorphComponent::ApplyTheresaShape(void* nativeThing,
+        TheresaVisualShapeState& state, bool restore) noexcept
+    {
+        ResolvedPresentation presentation;
+        if (!ResolvePresentation(nativeThing,presentation) || presentation.referenceBoneCount!=91) return false;
+        if (state.controller!=presentation.massBoneScaling)
+        {
+            state={};
+            state.controller=presentation.massBoneScaling;
+        }
+        // Local axis Y of Spine2/3 is model -Y (depth), verified from authored
+        // reference quaternions. Painted front lobes use Spine2; back vertices
+        // use neutral Spine3. Native006DED70 emits each bone's own scale,
+        // while parent scale affects the child translation separately: do NOT
+        // invert Spine3 as if this were a conventional inherited scale chain.
+        const float chestDepth=TheresaGarmentShape::BoneDepthScale(presentation.skeletalMesh);
+        constexpr const char* names[]={"Bip01_PelvisS0","Bip01_SpineS0","Bip01_Spine1S0","Bip01_Spine2S0",
+              "Bip01_Spine3S0","Bip01_L_ClavicleS0","Bip01_R_ClavicleS0",
+              "Bip01_L_UpperArmS0","Bip01_R_UpperArmS0","Bip01_L_ThighS0","Bip01_R_ThighS0"};
+          const NativeVector3 factors[]={
+              {1.035f,1.035f,1.035f},
+              {1.0f/1.035f,1.0f/1.035f,1.0f/1.035f},
+              {0.97f,0.97f,0.97f},
+              {1.0f/0.97f,chestDepth/0.97f,1.0f/0.97f},
+              {1.0f,1.0f,1.0f},
+              {0.86f,0.86f,0.86f},{0.86f,0.86f,0.86f},
+              // UpperArm origins inherit the shorter clavicles, bringing
+              // shoulders inward. Cancel scale at the arm roots so forearms,
+              // hands and weapon attachments retain their visual size.
+              {1.0f/0.86f,1.0f/0.86f,1.0f/0.86f},{1.0f/0.86f,1.0f/0.86f,1.0f/0.86f},
+              {1.0f/1.035f,1.0f/1.035f,1.0f/1.035f},
+              {1.0f/1.035f,1.0f/1.035f,1.0f/1.035f}};
+          std::array<NativeVector3,91> profile;
+          profile.fill(NativeVector3{});
+        for (std::size_t i=0;i<std::size(names);++i)
+        {
+            NativeFName name;
+            if (!ConstructFName(names[i],name)) return false;
+            bool found=false;
+            __try
+            {
+                for (int b=0;b<91;++b)
+                    if (!std::memcmp(presentation.referenceBones+b*kReferenceBoneStride,&name,sizeof(name)))
+                    { profile[b]=factors[i]; found=true; break; }
+            }
+            __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+            if (!found) return false;
+        }
+        const auto* module=reinterpret_cast<const std::uint8_t*>(GetModuleHandleW(nullptr));
+        const auto* address=module?module+kSetBoneTranslationScaleRva:nullptr;
+        if (!HasSignature(address,kSetBoneScaleSignature)) return false;
+        using SetFunction=void(__thiscall*)(void*,std::uint32_t,std::uint32_t,NativeVector3);
+        auto set=reinterpret_cast<SetFunction>(const_cast<std::uint8_t*>(address));
+        for (std::size_t i=0;i<profile.size();++i)
+        {
+            NativeFName name;
+            __try
+            {
+                const auto index=static_cast<int>(i);
+                std::memcpy(&name,presentation.referenceBones+i*kReferenceBoneStride,sizeof(name));
+                // The native setter can reallocate this array; reread per bone.
+                auto* bytes=static_cast<std::uint8_t*>(presentation.massBoneScaling);
+                const auto count=*reinterpret_cast<int*>(bytes+kMassScalingCountOffset);
+                auto* scales=*reinterpret_cast<NativeVector3**>(bytes+kMassScalingDataOffset);
+                NativeVector3 current;
+                if (index<count && scales) current=scales[index];
+                const auto& last=state.lastApplied[i];
+                const bool ours=state.applied[i] && std::fabs(current.x-last.x)<0.00001f &&
+                    std::fabs(current.y-last.y)<0.00001f && std::fabs(current.z-last.z)<0.00001f;
+                if (restore && !ours) continue;
+                NativeVector3 target;
+                if (restore)
+                {
+                    const auto& baseline=state.baseline[i];
+                    target={baseline.x,baseline.y,baseline.z};
+                }
+                else
+                {
+                    // Cosmetic progression only: retain 20% of the native
+                    // scale deviation and cap its extreme growth/shrinkage.
+                    // Never write CTCHeroMorph inputs or gameplay statistics.
+                    if (!ours) state.baseline[i]={static_cast<std::uint16_t>(index),current.x,current.y,current.z};
+                    const auto& baseline=state.baseline[i];
+                    const auto soften=[](float value) noexcept
+                    { return std::clamp(1.0f+(value-1.0f)*0.20f,0.98f,1.04f); };
+                    target={soften(baseline.x)*profile[i].x,soften(baseline.y)*profile[i].y,soften(baseline.z)*profile[i].z};
+                    if (ours && std::fabs(target.x-last.x)<0.00001f && std::fabs(target.y-last.y)<0.00001f &&
+                        std::fabs(target.z-last.z)<0.00001f) continue;
+                }
+                if (!std::isfinite(target.x) || !std::isfinite(target.y) || !std::isfinite(target.z) ||
+                    target.x<0.01f || target.y<0.01f || target.z<0.01f ||
+                    target.x>16.0f || target.y>16.0f || target.z>16.0f) return false;
+                set(presentation.massBoneScaling,name.index,name.number,target);
+                state.lastApplied[i]={static_cast<std::uint16_t>(index),target.x,target.y,target.z};
+                state.applied[i]=!restore;
+            }
+            __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+        }
+        return true;
     }
 
     bool HeroMorphComponent::ApplyBoneScaleState(

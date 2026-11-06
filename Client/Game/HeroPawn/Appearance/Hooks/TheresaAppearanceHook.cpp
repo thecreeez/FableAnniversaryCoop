@@ -36,7 +36,7 @@ namespace
 
     struct ClothingProjection final
     {
-        ModifierEntry entries[3][6] = {};
+        ModifierEntry entries[3][128] = {};
         ModifierCollection collections[3] = {};
         unsigned int selected = 0;
         unsigned int matched = 0;
@@ -46,7 +46,8 @@ namespace
 
     bool SelectClothing(void* component,
         const fable::game::hero_pawn::appearance::HeroClothingState& clothing,
-        ClothingProjection& projection) noexcept
+        ClothingProjection& projection,
+        const fable::game::hero_pawn::appearance::native::HeroClothingCatalog* catalog=nullptr) noexcept
     {
         __try
         {
@@ -62,7 +63,7 @@ namespace
                 auto& source = begin[category];
                 auto& target = projection.collections[category];
                 target.begin = target.end = projection.entries[category];
-                target.capacity = target.begin + 6;
+                target.capacity = target.begin + 128;
                 target.metadata = source.metadata;
                 const auto first = reinterpret_cast<std::uintptr_t>(source.begin);
                 const auto last = reinterpret_cast<std::uintptr_t>(source.end);
@@ -76,15 +77,22 @@ namespace
                     bool selected = false;
                     for (auto definition : clothing.definitionIndices)
                         if (definition > 0 && definition == entry.definition) selected = true;
+                    if (catalog)
+                    {
+                        selected=false;
+                        for (std::size_t owned=0;owned<catalog->count;++owned)
+                            if (catalog->definitions[owned]==entry.definition) { selected=true; break; }
+                    }
                     if (!selected) continue;
                     if (target.end == target.capacity) return false;
-                    *target.end++ = {entry.definition, (entry.enabled & ~0xFFu) | 1u};
+                    *target.end++ = {entry.definition, catalog?entry.enabled:(entry.enabled & ~0xFFu) | 1u};
                     ++projection.matched;
                 }
             }
             // Do not clear an existing outfit while the wear operation is
             // still publishing its modifier entries. Empty selection is valid
             // and must still run native removal when the player undresses.
+            if (catalog) return true;
             for (auto definition : clothing.definitionIndices)
             {
                 if (definition <= 0) continue;
@@ -219,6 +227,11 @@ namespace fable::game::hero_pawn::appearance::hooks
         (childhood?remoteChildDefinition_:remoteDefinition_).store(definition, std::memory_order_release);
     }
 
+    void TheresaAppearanceHook::SelectLocalPreviewHero(void* thing) noexcept
+    {
+        if (active_ && active_->guest_) localThing_.store(thing,std::memory_order_release);
+    }
+
     bool TheresaAppearanceHook::UsesTheresaPresentation(void* thing) noexcept
     {
         if (thing == nullptr) return false;
@@ -235,6 +248,20 @@ namespace fable::game::hero_pawn::appearance::hooks
             return (remote && definition==remote) || (child && definition==child);
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
+    bool TheresaAppearanceHook::IsLocalHeroDriverMesh(void* mesh) noexcept
+    {
+        void* thing=localThing_.load(std::memory_order_acquire);
+        if (!mesh || !UsesTheresaPresentation(thing)) return false;
+        __try
+        {
+            void* graphic=*reinterpret_cast<void**>(static_cast<std::uint8_t*>(thing)+0xA4);
+            void* pawn=graphic?*reinterpret_cast<void**>(static_cast<std::uint8_t*>(graphic)+8):nullptr;
+            return pawn && (*reinterpret_cast<void**>(static_cast<std::uint8_t*>(pawn)+0x384)==mesh ||
+                *reinterpret_cast<void**>(static_cast<std::uint8_t*>(pawn)+0x460)==mesh);
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
 
     void __fastcall TheresaAppearanceHook::SetPlayerGraphic(
@@ -286,13 +313,26 @@ namespace fable::game::hero_pawn::appearance::hooks
             original(component);
             return;
         }
+        // The local player's native modifier list is authoritative during a
+        // menu wear/unwear transaction. Its inventory selection is published
+        // at a different stage; filtering against that snapshot can suppress
+        // the operation which would finish rebuilding the new outfit.
+        const bool local=owner==localThing_.load(std::memory_order_acquire);
         HeroClothingState clothing;
+        native::HeroClothingCatalog catalog;
         ClothingProjection projection;
-        if (!native::HeroClothingComponent::Capture(owner, clothing) ||
-            !SelectClothing(component, clothing, projection))
+        const bool captured=local?native::HeroClothingComponent::CaptureCatalog(owner,catalog):
+            native::HeroClothingComponent::Capture(owner,clothing);
+        if (!captured || !SelectClothing(component, clothing, projection,local?&catalog:nullptr))
         {
+            // Never swallow the native rebuild when inventory and modifier
+            // publication briefly disagree. Hidden Hero geometry and the
+            // cosmetic scale pass remain controlled by TheresaHeroSkin.
+            original(component);
+            TheresaHeroSkin::InvalidateVisual(owner);
             if (clothingDiagnosticCount_++ < 16)
-                diagnostics_.Event("MultiplayerTheresaClothingDeferred", "selected clothing/component view unavailable");
+                diagnostics_.Event("MultiplayerTheresaClothingFallback",
+                    "selection unavailable during publication; native rebuild forwarded");
             return;
         }
         auto** begin = reinterpret_cast<ModifierCollection**>(static_cast<std::uint8_t*>(component) + 0x3C);
@@ -317,12 +357,14 @@ namespace fable::game::hero_pawn::appearance::hooks
             *end = savedEnd;
             *capacity = savedCapacity;
         }
+        TheresaHeroSkin::InvalidateVisual(owner);
         if (clothingDiagnosticCount_++ < 16)
         {
             char detail[192] = {};
             std::snprintf(detail, sizeof(detail),
-                "thing=%p stage=%s selected=%u matched=%u operation=native-clothing-projection visual=unverified",
-                owner, stage, projection.selected, projection.matched);
+                "thing=%p stage=%s selected=%u matched=%u operation=%s visual=unverified",
+                owner, stage, projection.selected, projection.matched,
+                local?"native-enabled-clothing-catalog":"selected-clothing-projection");
             diagnostics_.Event("MultiplayerTheresaClothingSubmitted", detail);
         }
     }

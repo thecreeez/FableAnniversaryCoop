@@ -45,6 +45,13 @@ namespace fable::game
             return false;
         }
         state_->servicesReady = true;
+        state_->theresaPreview=configuration.ScenarioIs(L"theresa_preview") && !configuration.MultiplayerEnabled();
+        if (state_->theresaPreview && !state_->previewAppearance.Install(gameModule,true,diagnostics))
+        {
+            diagnostics.Event("ClientFailed","theresa-single-preview-appearance");
+            Shutdown();
+            return false;
+        }
         if (!state_->multiplayer.Initialize(
                 configuration,
                 state_->services.Entities(),
@@ -243,6 +250,9 @@ namespace fable::game
         state_->developerSaveSections.Bind(nullptr);
         state_->multiplayer.Shutdown();
         state_->multiplayerReady = false;
+        if (state_->theresaPreview) state_->previewAppearance.Shutdown();
+        state_->theresaPreview=false;
+        state_->previewHero=nullptr;
         state_->scripts.Shutdown();
         state_->scriptsReady = false;
         state_->services.Shutdown();

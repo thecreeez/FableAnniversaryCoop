@@ -177,6 +177,7 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClCompile Include="Game\HeroPawn\Appearance\Native\RemoteHeroRuntimeDefinition.cpp" />
     <ClCompile Include="Game\HeroPawn\Appearance\Hooks\TheresaAppearanceHook.cpp" />
     <ClCompile Include="Game\HeroPawn\Appearance\Hooks\TheresaHeroSkin.cpp" />
+    <ClCompile Include="Game\HeroPawn\Appearance\Native\TheresaGarmentShape.cpp" />
     <ClCompile Include="Game\HeroPawn\Equipment\Hooks\TheresaWeaponAttachmentHook.cpp" />
     <ClCompile Include="Game\HeroPawn\Appearance\RemoteHeroAppearanceController.cpp" />
     <ClCompile Include="Game\HeroPawn\Combat\RemoteHeroCombatController.cpp" />
@@ -508,6 +509,7 @@ copy /Y "$(ProjectDir)Scripts\Debug\DeveloperTools.as" "$(OutDir)scripts\debug\d
     <ClInclude Include="Game\HeroPawn\Appearance\Native\RemoteHeroRuntimeDefinition.h" />
     <ClInclude Include="Game\HeroPawn\Appearance\Hooks\TheresaAppearanceHook.h" />
     <ClInclude Include="Game\HeroPawn\Appearance\Hooks\TheresaHeroSkin.h" />
+    <ClInclude Include="Game\HeroPawn\Appearance\Native\TheresaGarmentShape.h" />
     <ClInclude Include="Game\HeroPawn\Equipment\Hooks\TheresaWeaponAttachmentHook.h" />
     <ClInclude Include="Game\HeroPawn\Appearance\RemoteHeroAppearanceController.h" />
     <ClInclude Include="Game\HeroPawn\Combat\RemoteHeroCombatController.h" />

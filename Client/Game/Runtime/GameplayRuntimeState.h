@@ -8,6 +8,7 @@
 #include "Multiplayer/Runtime/MultiplayerSession.h"
 #include "Scripting/Runtime/Host/ScriptHost.h"
 #include "UI/ImGui/Runtime/ImGuiDx9Runtime.h"
+#include "Game/HeroPawn/Appearance/Hooks/TheresaAppearanceHook.h"
 
 #include <atomic>
 
@@ -27,6 +28,9 @@ namespace fable::game
         developer_tools::runtime::DeveloperToolsRuntime developerTools;
         ui::imgui::ImGuiDx9Runtime scriptUi;
         core::Diagnostics diagnostics = {};
+        hero_pawn::appearance::hooks::TheresaAppearanceHook previewAppearance;
+        void* previewHero = nullptr;
+        bool theresaPreview = false;
         GameplayFrameMailbox mailbox;
         ULONGLONG lastFrameAt = 0;
         bool servicesReady = false;

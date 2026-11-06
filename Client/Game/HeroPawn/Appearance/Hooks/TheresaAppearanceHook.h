@@ -19,7 +19,9 @@ namespace fable::game::hero_pawn::appearance::hooks
         bool Install(HMODULE module, bool guest, const core::Diagnostics& diagnostics) noexcept;
         void Shutdown() noexcept;
         static void RegisterRemoteDefinition(void* definition, bool childhood=false) noexcept;
+        static void SelectLocalPreviewHero(void* thing) noexcept;
         [[nodiscard]] static bool UsesTheresaPresentation(void* thing) noexcept;
+        [[nodiscard]] static bool IsLocalHeroDriverMesh(void* mesh) noexcept;
 
     private:
         using SetGraphic = void(__thiscall*)(void*, int, unsigned int);

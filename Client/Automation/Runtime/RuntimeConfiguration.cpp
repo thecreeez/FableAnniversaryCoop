@@ -282,6 +282,7 @@ namespace fable::automation::runtime
 
     bool RuntimeConfiguration::UsesFrontEndStartAutomation() const noexcept
     {
+        if (ScenarioIs(L"theresa_preview")) return true;
         return ScenarioIs(L"observe_frontend") ||
             ScenarioIs(L"observe_save_list") ||
             ScenarioIs(L"bootstrap_fixture_probe") ||
@@ -311,6 +312,7 @@ namespace fable::automation::runtime
 
     bool RuntimeConfiguration::LoadsFixture() const noexcept
     {
+        if (ScenarioIs(L"theresa_preview")) return true;
         return ScenarioIs(L"load_fixture") ||
             ScenarioIs(L"appearance_cycle") ||
             ScenarioIs(L"multiplayer_host") ||

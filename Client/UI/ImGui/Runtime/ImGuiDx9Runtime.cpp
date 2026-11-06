@@ -10,6 +10,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdio>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
     HWND window,
@@ -24,6 +25,11 @@ namespace
     constexpr std::uintptr_t EndSceneResumeVa = 0x015E5908U;
     constexpr std::uintptr_t ResetSiteVa = 0x015D3B6CU;
     constexpr std::uintptr_t ResetResumeVa = 0x015D3B77U;
+    constexpr std::uintptr_t AdapterCheckSiteVa = 0x015D5150U;
+    constexpr std::uintptr_t AdapterCheckResumeVa = 0x015D5155U;
+    fable::core::hooking::CodePatch g_adapterCheckPatch;
+    fable::core::Diagnostics g_adapterDiagnostics;
+    void* g_adapterCheckResume=nullptr;
 
     constexpr std::array<std::uint8_t, 6> EndSceneExpected = {
         0x8B, 0x91, 0xA8, 0x00, 0x00, 0x00};
@@ -50,6 +56,30 @@ namespace
         }
     };
 
+    HRESULT __stdcall ObserveAdapterFormat(IDirect3D9* api, UINT adapter, D3DDEVTYPE type,
+        D3DFORMAT display, DWORD usage, D3DRESOURCETYPE resource, D3DFORMAT format) noexcept
+    {
+        HookCall call;
+        const HRESULT result=api->CheckDeviceFormat(adapter,type,display,usage,resource,format);
+        D3DADAPTER_IDENTIFIER9 identifier={};
+        api->GetAdapterIdentifier(adapter,0,&identifier);
+        HRESULT alternate=result;
+        if (FAILED(result)) alternate=api->CheckDeviceFormat(adapter,type,D3DFMT_X8R8G8B8,usage,resource,format);
+        HANDLE token=nullptr;
+        unsigned restricted=0;
+        if (OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&token))
+        { restricted=IsTokenRestricted(token)?1u:0u; CloseHandle(token); }
+        wchar_t desktop[64]={}; DWORD length=0;
+        GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()),UOI_NAME,desktop,sizeof(desktop),&length);
+        char detail[768]={};
+        std::snprintf(detail,sizeof(detail),
+            "adapter=%u type=%u display=%u usage=0x%08lX format=%u hr=0x%08lX alternate_x8=0x%08lX device=%.100s driver=%.80s restricted=%u desktop=%ls",
+            adapter,static_cast<unsigned>(type),static_cast<unsigned>(display),usage,static_cast<unsigned>(format),
+            static_cast<unsigned long>(result),static_cast<unsigned long>(alternate),identifier.Description,identifier.Driver,restricted,desktop);
+        g_adapterDiagnostics.Event("Dx9AdapterFormatChecked",detail);
+        return result; // Observe only: never turn an unsupported format into success.
+    }
+
     extern "C" void __stdcall RenderFrameThunk(
         IDirect3DDevice9* device) noexcept
     {
@@ -73,6 +103,14 @@ namespace
     }
 
 #if defined(_M_IX86)
+    __declspec(naked) void AdapterCheckDetour()
+    {
+        __asm
+        {
+            call ObserveAdapterFormat
+            jmp dword ptr [g_adapterCheckResume]
+        }
+    }
     __declspec(naked) void EndSceneDetour()
     {
         __asm
@@ -159,6 +197,13 @@ namespace fable::ui::imgui
             base + EndSceneResumeVa - PreferredImageBase);
         g_resetResume = reinterpret_cast<void*>(
             base + ResetResumeVa - PreferredImageBase);
+        g_adapterCheckResume=reinterpret_cast<void*>(base+AdapterCheckResumeVa-PreferredImageBase);
+        g_adapterDiagnostics=diagnostics;
+        const std::uint8_t adapterExpected[]={0x8B,0x41,0x28,0xFF,0xD0};
+        if (!g_adapterCheckPatch.InstallRelativeJump(
+                reinterpret_cast<void*>(base+AdapterCheckSiteVa-PreferredImageBase),adapterExpected,sizeof(adapterExpected),
+                reinterpret_cast<void*>(&AdapterCheckDetour),sizeof(adapterExpected)))
+            diagnostics_.Event("Dx9AdapterProbeRejected","verified capability call-site mismatch");
         g_active.store(this, std::memory_order_release);
 
         if (!endScenePatch_.InstallRelativeJump(
@@ -176,6 +221,7 @@ namespace fable::ui::imgui
         {
             (void)resetPatch_.Shutdown();
             (void)endScenePatch_.Shutdown();
+            (void)g_adapterCheckPatch.Shutdown();
             g_active.store(nullptr, std::memory_order_release);
             scripts_ = nullptr;
             diagnostics_.Log(
@@ -203,7 +249,8 @@ namespace fable::ui::imgui
         visible_.store(false, std::memory_order_release);
         const bool resetRestored = resetPatch_.Shutdown();
         const bool endSceneRestored = endScenePatch_.Shutdown();
-        if (!resetRestored || !endSceneRestored)
+        const bool adapterRestored=g_adapterCheckPatch.Shutdown();
+        if (!resetRestored || !endSceneRestored || !adapterRestored)
         {
             diagnostics_.Event(
                 "ScriptImGuiShutdownDeferred",

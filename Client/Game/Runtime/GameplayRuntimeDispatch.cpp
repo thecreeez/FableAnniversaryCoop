@@ -2,6 +2,10 @@
 
 #include "Game/Creature/Combat/CreatureCombatService.h"
 #include "Game/Creature/Locomotion/CreatureLocomotionService.h"
+#include "Game/Entity/Entity.h"
+#include "Game/Entity/EntityService.h"
+#include "Game/Player/PlayerService.h"
+#include "Game/Cutscene/CutsceneObserver.h"
 
 #include <algorithm>
 
@@ -32,9 +36,28 @@ namespace fable::game
         const float delta = state_->lastFrameAt == 0 ? 0.0f :
             static_cast<float>((std::min)(now - state_->lastFrameAt, 100ULL)) / 1000.0f;
         state_->lastFrameAt = now;
+        if (state_->theresaPreview)
+        {
+            using namespace hero_pawn::appearance::hooks;
+            Entity* hero=state_->services.Players().GetHero();
+            void* thing=hero && hero->IsValid()?state_->services.Entities().ResolveNative(hero->NativeHandle()):nullptr;
+            if (thing!=state_->previewHero)
+            {
+                TheresaHeroSkin::Forget(state_->previewHero);
+                state_->previewHero=thing;
+                TheresaAppearanceHook::SelectLocalPreviewHero(thing);
+                if (thing) state_->diagnostics.Event("TheresaSinglePreviewHeroBound","single local player; no transport, host or remote clone");
+            }
+            bool cutscene=false;
+            if (cutscene::CutsceneObserver::ReadNativeState(GetModuleHandleW(nullptr),cutscene))
+                TheresaHeroSkin::SetCutsceneHidden(cutscene);
+            if (thing) TheresaHeroSkin::Update(thing,hero->GetDefinitionName()=="CREATURE_HERO_CHILD");
+            if (hero) hero->Release();
+        }
 
         if (requests.worldReady)
         {
+            hero_pawn::appearance::hooks::TheresaHeroSkin::OnWorldReady();
             if (state_->multiplayer.OnWorldReady())
                 state_->scripts.DispatchWorldReady();
             else

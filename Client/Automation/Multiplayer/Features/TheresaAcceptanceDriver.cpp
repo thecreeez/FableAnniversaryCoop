@@ -1,6 +1,7 @@
 #include "TheresaAcceptanceDriver.h"
 #include "Multiplayer/Runtime/MultiplayerRuntimeGraph.h"
 #include "Game/HeroPawn/Appearance/Native/HeroClothingComponent.h"
+#include "Game/HeroPawn/Appearance/Native/HeroMorphComponent.h"
 #include "Game/HeroPawn/Appearance/Hooks/TheresaHeroSkin.h"
 #include "Game/Entity/EntityService.h"
 #include "Game/Entity/Entity.h"
@@ -27,6 +28,7 @@ namespace fable::automation::multiplayer::features
     {
         multiplayer_=nullptr; entities_=nullptr; diagnostics_={}; baseline_={}; changed_={}; savedPosition_={};
         started_=next_=phaseAt_=revision_=0; phase_=0; host_=checkpoint_=false;
+        originalScales_={}; growthStress_=growthVerified_=false;
     }
     void TheresaAcceptanceDriver::Fail(const char* reason) noexcept
     {
@@ -51,6 +53,43 @@ namespace fable::automation::multiplayer::features
         if (!subject || !appearance::hooks::TheresaHeroSkin::InspectForTest(subject,false)) return false;
         if (!checkpoint_)
         {
+            if (!growthVerified_)
+            {
+                // Adult Hero reference bone43 is left ForeArm (91-bone mesh).
+                // UpperArm now compensates narrowed clavicles; use a bone
+                // with identity profile to measure progression damping alone.
+                // Exercise a real native visual scale; do not alter strength.
+                if (!growthStress_)
+                {
+                    if (!appearance::native::HeroMorphComponent::CaptureBoneScaleState(subject,originalScales_)) return false;
+                    auto stress=originalScales_;
+                    bool found=false;
+                    for (std::size_t i=0;i<stress.count;++i)
+                        if (stress.entries[i].boneIndex==43) { stress.entries[i]={43,2.0f,2.0f,2.0f}; found=true; break; }
+                    if (!found)
+                    {
+                        if (stress.count>=stress.MaximumEntries) { Fail("theresa-growth-test-scale-capacity"); return false; }
+                        stress.entries[stress.count++]={43,2.0f,2.0f,2.0f};
+                    }
+                    if (!appearance::native::HeroMorphComponent::ApplyBoneScaleState(subject,stress)) return false;
+                    growthStress_=true;
+                    diagnostics_.Event("TheresaProgressionStressApplied","native forearm visual scale=2; gameplay stats untouched");
+                    return false;
+                }
+                appearance::HeroBoneScaleState observed;
+                if (!appearance::native::HeroMorphComponent::CaptureBoneScaleState(subject,observed)) return false;
+                bool damped=false;
+                for (std::size_t i=0;i<observed.count;++i)
+                    if (observed.entries[i].boneIndex==43 &&
+                        std::fabs(observed.entries[i].x-1.04f)<0.001f &&
+                        std::fabs(observed.entries[i].y-1.04f)<0.001f &&
+                        std::fabs(observed.entries[i].z-1.04f)<0.001f) damped=true;
+                if (!damped) return false;
+                if (!appearance::native::HeroMorphComponent::ApplyBoneScaleState(subject,originalScales_)) return false;
+                growthVerified_=true;
+                diagnostics_.Event("TheresaProgressionDampingVerified","actual native forearm visual scale reduced from2 to1.04 by runtime; original visual state restored");
+                return false;
+            }
             appearance::HeroClothingState current;
             if (!appearance::native::HeroClothingComponent::Capture(subject,current)) return false;
             if (phase_==0)
@@ -58,8 +97,12 @@ namespace fable::automation::multiplayer::features
                 baseline_=current; phase_=1; phaseAt_=now;
                 changed_=baseline_;
                 bool found=false;
-                for (auto& id:changed_.definitionIndices) if (id>0) { id=-1; found=true; break; }
-                if (!found) { Fail("theresa-fixture-has-no-equipped-garment"); return false; }
+                // Exercise actual torso/leg section restoration, not a hat
+                // whose removal leaves both stock outfit sections unchanged.
+                for (const auto slot:{1u,3u,5u})
+                    if (changed_.definitionIndices[slot]>0)
+                    { changed_.definitionIndices[slot]=-1; found=true; break; }
+                if (!found) { Fail("theresa-fixture-has-no-equipped-body-garment"); return false; }
                 diagnostics_.Event("TheresaOutfitBaseline",host_?"host actual remote inventory and render component":"guest actual local inventory and render component");
             }
             else if (phase_==1)

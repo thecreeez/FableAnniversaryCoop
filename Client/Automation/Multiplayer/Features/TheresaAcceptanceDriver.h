@@ -1,6 +1,7 @@
 #pragma once
 #include "Core/Diagnostics/Diagnostics.h"
 #include "Game/HeroPawn/Appearance/HeroClothingState.h"
+#include "Game/HeroPawn/Appearance/HeroMorphState.h"
 #include "Game/Math/Vector3.h"
 #include <cstdint>
 namespace fable::multiplayer { class MultiplayerRuntimeGraph; }
@@ -22,6 +23,8 @@ namespace fable::automation::multiplayer::features
         core::Diagnostics diagnostics_;
         game::hero_pawn::appearance::HeroClothingState baseline_;
         game::hero_pawn::appearance::HeroClothingState changed_;
+        game::hero_pawn::appearance::HeroBoneScaleState originalScales_;
+        bool growthStress_ = false, growthVerified_ = false;
         game::Vector3 savedPosition_;
         std::uint64_t started_ = 0, next_ = 0, phaseAt_ = 0, revision_ = 0;
         unsigned phase_ = 0;
