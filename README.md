@@ -1,6 +1,6 @@
 # AlbionTogether — Fable Anniversary Multiplayer Mod
 
-Experimental multiplayer mod for Fable Anniversary.
+Shared-campaign multiplayer mod for Fable Anniversary, forked from [AlbionTogether](https://github.com/kvoeten/AlbionTogether) v0.1.0-alpha.14.
 
 Join the [AlbionTogether Discord](https://discord.gg/5JSKmjKd85) for playtests, updates, and support.
 
@@ -10,7 +10,26 @@ Join the [AlbionTogether Discord](https://discord.gg/5JSKmjKd85) for playtests, 
 
 One host can accept up to 64 guests (65 players total); the current alpha has been manually tested with six players. Players can load their own Heroes, explore Albion independently, and meet up anywhere. Remote Heroes keep their appearance, weapons, combat animations, emotes, and most Will spell effects.
 
-The latest update improves loading different saves, travelling between regions, and shopkeeper stability.
+This fork adds shared story progression, cutscenes, world interactions, and expanded NPC and combat synchronization.
+
+### Shared campaign: completed
+
+- Shared quest steps, counters, world flags, and quest screens.
+- Shared cutscenes with player gathering, waiting/cancellation, world pause, and skipping by any player.
+- Complete combat and NPC synchronization: dynamic NPC rosters, nearest-player simulation ownership, ranged aggro handoffs, actions, animations, damage, health, and death.
+- Shared chest opening and rewards: consumables for everyone; weapons, armour, and gold for the opener.
+- Shared demon-door opening and experience rewards: the killer receives 1x XP and other players receive 0.3x.
+- Choosing **Stay** at a quest-area boundary preserves control of both Heroes.
+- Synchronized time of day, weather, player and weapon effects, and destructible objects.
+- Shared checkpoint recovery and weapon restoration after travelling.
+
+### Work in progress and known issues
+
+- **Theresa as a playable character:** clothing, equipment previews, body shaping, and cutscene presentation are still being refined.
+- **New game and childhood:** starting a campaign together, child models, introductory scenes, and early saves remain WIP.
+- **Shared-state persistence:** saving and loading shared chest/door states and experience remains WIP.
+- **Quest map:** currently broken for the guest in the Heroes' Guild.
+- Shared story morality, houses and shops, minigames, and individual Hero names/NPC name calls remain planned.
 
 During alpha, expect some jank. Systems are being roughly implemented to make a full multiplayer playthrough possible. Once the full game can be played by two or more people, development will move into beta and focus on polishing the experience toward release.
 
@@ -33,7 +52,6 @@ During alpha, expect some jank. Systems are being roughly implemented to make a 
 
 ### Next
 
-- Shared quests, cutscenes, warps, and world progress.
 - Equipment, loot, trading, currency, shops, and property ownership.
 - Player names, interaction menus, door/key permissions, and RP tools.
 - Proximity voice chat.
