@@ -1,39 +1,26 @@
-# AlbionTogether — Fable Anniversary Multiplayer Mod
+# FableAnniversaryCoop — Fable Anniversary COOP Mod
 
-Shared-campaign multiplayer mod for Fable Anniversary, forked from [AlbionTogether](https://github.com/kvoeten/AlbionTogether) v0.1.0-alpha.14.
+Based on [AlbionTogether](https://github.com/kvoeten/AlbionTogether)
 
-Join the [AlbionTogether Discord](https://discord.gg/5JSKmjKd85) for playtests, updates, and support.
+## Current state
 
-![Six Heroes together in Albion](media/six-player-alpha.png)
-
-## Current alpha
-
-One host can accept up to 64 guests (65 players total); the current alpha has been manually tested with six players. Players can load their own Heroes, explore Albion independently, and meet up anywhere. Remote Heroes keep their appearance, weapons, combat animations, emotes, and most Will spell effects.
-
-This fork adds shared story progression, cutscenes, world interactions, and expanded NPC and combat synchronization.
-
-### Shared campaign: completed
-
-- Shared quest steps, counters, world flags, and quest screens.
-- Shared cutscenes with player gathering, waiting/cancellation, world pause, and skipping by any player.
-- Complete combat and NPC synchronization: dynamic NPC rosters, nearest-player simulation ownership, ranged aggro handoffs, actions, animations, damage, health, and death.
-- Shared chest opening and rewards: consumables for everyone; weapons, armour, and gold for the opener.
-- Shared demon-door opening and experience rewards: the killer receives 1x XP and other players receive 0.3x.
-- Choosing **Stay** at a quest-area boundary preserves control of both Heroes.
-- Synchronized time of day, weather, player and weapon effects, and destructible objects.
-- Shared checkpoint recovery and weapon restoration after travelling.
-
-### Work in progress and known issues
-
-- **Theresa as a playable character:** clothing, equipment previews, body shaping, and cutscene presentation are still being refined.
-- **New game and childhood:** starting a campaign together, child models, introductory scenes, and early saves remain WIP.
-- **Shared-state persistence:** saving and loading shared chest/door states and experience remains WIP.
-- **Quest map:** currently broken for the guest in the Heroes' Guild.
-- Shared story morality, houses and shops, minigames, and individual Hero names/NPC name calls remain planned.
-
-During alpha, expect some jank. Systems are being roughly implemented to make a full multiplayer playthrough possible. Once the full game can be played by two or more people, development will move into beta and focus on polishing the experience toward release.
+Right now working around stable working shared world and complete game. Final goal is make game fully playable from the start till the end with 2 players.
 
 ### Done
+
+- Shared world, npcs synchronized
+- Cutscenes requires all players (made with native dialogue system)
+- Npcs animations
+- Xp, loot and chests
+- Players things (animations, modifiers on weapon, attack modifier)
+
+### Unstable
+
+- Players can play as main character sister. Fully visible armor and weapon.
+- Shared quests
+- Synchronized save/load by host (also death because of any player died.)
+
+### Was done in AlbionTogether
 
 - Load your own save character and see each other.
 - Walk around Albion independently and meet in any region.
@@ -51,11 +38,6 @@ During alpha, expect some jank. Systems are being roughly implemented to make a 
 - Native launcher for hosting, joining, connection checks, and firewall setup.
 
 ### Next
-
-- Equipment, loot, trading, currency, shops, and property ownership.
-- Player names, interaction menus, door/key permissions, and RP tools.
-- Proximity voice chat.
-- Slow Time and Raise Dead synchronization (optional; may be omitted).
 
 This is an early development release. Back up ordinary saves before testing.
 
@@ -92,10 +74,10 @@ The MIT License only covers code that this project has the right to license.
 
 ## Disclaimer
 
-AlbionTogether is an unofficial fan project and is not affiliated with,
+FableAnniversaryCoop is an unofficial fan project and is not affiliated with,
 authorized, sponsored, or endorsed by Microsoft.
 
-AlbionTogether requires a legally obtained Steam copy of Fable Anniversary
+FableAnniversaryCoop requires a legally obtained Steam copy of Fable Anniversary
 with modding support. It does not distribute Microsoft game files or provide
 access to the game itself.
 
